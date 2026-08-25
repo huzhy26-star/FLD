@@ -1,0 +1,522 @@
+##Fig.3A####
+for (samplename in c("ND","FLD8","FLD24","FLD36")) {
+  print(samplename)
+  obj_ST <- readRDS(glue("/data02/huzhiyang_03/FLD/RDS_file/ST/RDS_大类/{samplename}.rds"))
+  
+  SpatialDimPython(obj = obj_ST,
+                   prefix = "/data02/huzhiyang_03/FLD/result/28.ST/Dimplot_celltype",
+                   plot_item = "celltype",
+                   plot_order = c('B_cell',"T_cell","Endothelial","Myeloid", 'HSC','Hepatocyte',"Cholangiocyte") ,
+                   tmp_color = c("#238b45","#ce1256","#1f78b4","#6a3d9a","#df65b0", "#eaeaea", "#FDD84C"),
+                   name = glue("{samplename}_celltype"))
+}
+
+##Fig.3B####
+for (samplename in c("ND","FLD8","FLD24","FLD36")) {
+  print(samplename)
+  obj_ST <- readRDS(glue("/data02/huzhiyang_03/FLD/RDS_file/ST/RDS_大类/{samplename}.rds"))
+  
+  SpatialDimPython(obj = obj_ST,
+                   prefix = "/data02/huzhiyang_03/FLD/result/28.ST/Dimplot_celltype",
+                   plot_item = "Liver_zone",
+                   plot_order = c("CV","Mid","PV") ,
+                   tmp_color = c("#440154FF","#21908CFF","#FDE725FF"),
+                   name = glue("{samplename}_Liver_zone"))
+}
+
+##Fig.3C####
+hep_filter <- subset(obj_merged, sample %in% c("FLD8")) %>% subset(celltype == "Hepatocyte")
+obj <- AddModuleScore(hep_filter, features=gl_1, name = "") 
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+
+gradient_colors <- c( "#FFFFFF",rep("#E2F0D9",5),  rep("#FFF5C0",6), "#FFFFFF") #"#FFFFFF", rep("#FFF5C0",9), "#FFFFFF",
+bg_gradient <- matrix(colorRampPalette(gradient_colors)(100), nrow = 1)
+
+p_list <- list()
+for (pathway in names(gl_1)) {
+  dat_p <- obj@meta.data %>% 
+    dplyr::select(c(zone_rank, score = pathway, sample))
+  dat_p$zone_rank <- as.factor(as.character(dat_p$zone_rank))
+  
+  mu <- dat_p %>%
+    group_by(zone_rank,sample) %>%
+    summarise(grp.mean = mean(score, na.rm = TRUE))
+  mu$group <- mu$sample
+  p_list[[pathway]] <- ggplot(mu) +
+    annotation_raster(
+      raster = bg_gradient, 
+      xmin = 1, xmax = 9, 
+      ymin = -Inf, ymax = Inf,
+      interpolate = TRUE 
+    ) +
+    geom_point(aes_string(x = "zone_rank", y = "grp.mean", group = "group",color = "group"), size = 2) +
+    geom_line(aes_string(x = "zone_rank", y = "grp.mean", group = "group",color = "group"), size = 1) +
+    labs(title = pathway, x = '', y = ' ') +
+    scale_color_manual(values = "black") + 
+    theme_classic(base_line_size = 1) + 
+    theme(
+      legend.position = "none",
+      plot.title = element_text(size = 10, colour = "black", hjust = 0.5),
+      axis.title.y = element_text(size = 10, color = "black", face = "bold", vjust = 1.9, hjust = 0.5, angle = 90),
+      legend.title = element_text(color = "black", size = 15, face = "bold"),
+      legend.text = element_text(color = "black", size = 10, face = "bold"),
+      axis.text.x = element_text(size = 10, color = "black", face = "bold", vjust = 0, hjust = 1, angle = 0),
+      axis.text.y = element_text(size = 10, color = "black", face = "plain", vjust = 0.5, hjust = 0.5, angle = 0)
+    )
+}
+
+##Fig.3D####
+library(BiocNeighbors)
+library(CellChat)
+library(presto)
+library(ComplexHeatmap)
+library(circlize)
+library(NMF)
+sn_liver <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/allcell_0826.rds")
+
+obj <- subset(sn_liver, time %in%  c("8w")) 
+obj@meta.data$samples = obj@meta.data$orig.ident
+cellchat = createCellChat(object = obj, meta =obj@meta.data, group.by = "Cellgroup")
+print("subject start")
+cellchat@DB = CellChatDB.mouse
+cellchat = subsetData(cellchat) %>%
+  identifyOverExpressedGenes() %>%
+  identifyOverExpressedInteractions() %>%
+  smoothData(adj = PPI.mouse)
+
+cellchat = computeCommunProb(cellchat, raw.use = TRUE, trim = 0,population.size = TRUE, type = "truncatedMean") %>%
+  filterCommunication(min.cells = 10)
+
+df.net = subsetCommunication(cellchat)
+cellchat = computeCommunProbPathway(cellchat) %>% 
+  aggregateNet()
+gc()
+saveRDS(cellchat, "/data02/huzhiyang_03/FLD/result/06.细胞互作分析/核测序new/MajorCellType/cellchat_8w_mye.rds")
+print("done")
+
+select_col <- c("Cellgroup") 
+comparisons <- combn(c("4w","8w"), 2, simplify = F)
+for (i in 1:length(comparisons)) {
+  select_group <- comparisons[[i]]
+  group_1 <- select_group[1]
+  group_2 <- select_group[2]
+  for (cur_col in select_col) {
+    out_dir <- glue("/data02/huzhiyang_03/FLD/result/06.细胞互作分析/核测序new/{select_col}/{group_2}")
+    cco_1 <- readRDS(glue("/data02/huzhiyang_03/FLD/result/06.细胞互作分析/核测序new/{select_col}/cellchat_{group_1}_min10.rds"))
+    cco_2 <- readRDS(glue("/data02/huzhiyang_03/FLD/result/06.细胞互作分析/核测序new/{select_col}/cellchat_{group_2}_min10.rds"))
+    cat("The cell identities in single cell interaction", group_1, ":", levels(cco_1@idents), "\n\n")
+    cat("The cell identities in single cell interaction", group_2, ":", levels(cco_2@idents), "\n\n")
+    
+    common_celltypes <- intersect(levels(cco_1@idents), levels(cco_2@idents))
+    cco_1_aligned <- subsetCellChat(cco_1, idents.use = common_celltypes)
+    cco_2_aligned <- subsetCellChat(cco_2, idents.use = common_celltypes)
+    
+    cco.list <- list(cco_1_aligned, cco_2_aligned)
+    names(cco.list) <- select_group
+    
+    cellchat <- CellChat::mergeCellChat(cco.list, add.names = names(cco.list), merge.data = TRUE)
+    
+    saveRDS(cellchat, glue("{out_dir}/Merged_cellchat_{group_1}_{group_2}_{cur_col}.rds"))
+    save(cco.list, cellchat, file = glue("{out_dir}/Merged_cellchat_{group_1}_{group_2}_{cur_col}.Rdata"))
+  }
+}
+
+netVisual_circle(mat2, 
+                 vertex.weight = groupSize,
+                 weight.scale = T, 
+                 arrow.size = 0.8,
+                 sources.use = c("Hepatocyte"),
+                 # targets.use = c("Hepatocyte"),
+                 title.name = "Hepatocyte",   
+                 vertex.label.cex = 1,
+                 margin =0.1)
+
+##Fig.3E####
+cellchat <- readRDS("/data02/huzhiyang_03/FLD/result/06.细胞互作分析/核测序new/Cellgroup/8w/Merged_cellchat_4w_8w_Cellgroup_hepMye.rds")
+df.net1 <- subsetCommunication(cellchat)[[2]]
+df.net1 <- df.net1[,c(1:5,7)]
+df.net1 <- filter(df.net1, source == "Hepatocyte" & target == "Resident_KC")
+
+df.net2 <- subsetCommunication(cellchat)[[1]]
+df.net2 <- df.net2[,c(1:5, 7)]
+df.net2 <- filter(df.net2, source == "Hepatocyte" & target == "Resident_KC")
+df_merge <- merge(df.net1, df.net2, by = c("ligand", "receptor", "target", "interaction_name") ,all =T)
+df_merge[is.na(df_merge)] <- 0
+df_merge$diff <- df_merge$prob.x - df_merge$prob.y
+df_merge <- df_merge %>%
+  na.omit() %>% 
+  arrange(-diff) %>%
+  head(n = 10)
+
+colnames(df_merge)[colnames(df_merge) == "prob.x"] <- "8w"
+colnames(df_merge)[colnames(df_merge) == "prob.y"] <- "4w"
+colnames(df_merge)
+data_plot <- as.data.frame(df_merge[, c(4,6,8)])
+data_plot <- column_to_rownames(data_plot, var = colnames(data_plot)[1])
+df_long <- df_merge %>%
+  dplyr::select(interaction_name, source.x, target, `8w`, `4w`, diff) %>%
+  pivot_longer(
+    cols = c(`8w`, `4w`),
+    names_to = "Group",
+    values_to = "prob"
+  ) %>%
+  mutate(interaction_name = factor(interaction_name, levels = rev(unique(df_merge$interaction_name))))
+
+head(df_long)
+p_bubble <- ggplot(df_long, aes(x = Group, y = interaction_name)) +
+  geom_point(aes(size = prob, fill = prob), shape = 21, color = "black", stroke = 0.3) +
+  scale_fill_gradientn(
+    colors = c("#ffffff", "#fcae91", "#fb6a4a", "#de2d26", "#a50f15"),
+    name = "Communication\nProbability"
+  ) +
+  scale_size_continuous(
+    range = c(2, 8),
+    name = "Communication\nProbability"
+  ) +
+  labs(
+    x = NULL,
+    y = "Interactions (Ligand - Receptor)",
+    title = paste0(unique(df_long$source.x), " -> ", unique(df_long$target))
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    panel.grid.major = element_line(color = "grey92", size = 0.3),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.8),
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, color = "black", face = "plain"),
+    axis.text.y = element_text(color = "black", face = "plain"),
+    axis.title = element_text(face = "plain"),
+    plot.title = element_text(hjust = 0.5, face = "plain", size = 12),
+    legend.position = "right",
+    legend.title = element_text(size = 9, face = "plain"),
+    legend.key = element_blank()
+  )
+p_bubble
+
+##Fig.3F####
+KC <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Kupffer_16_harmony.rds")
+KC_filter <- subset(KC, subtype_new2 == "Resident_KC") 
+Idents(KC_filter) <- "time"
+DEG_8w <- FindMarkers(KC_filter,ident.1 = "8w",ident.2 = "4w",only.pos = T)
+
+result_path = "~/FLD/KC_8w功能"
+genelist <- DEG_8w %>% 
+  filter(p_val_adj < 0.05 & avg_log2FC > 0.25) %>% rownames()
+gene_symbol <- bitr(genelist, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Mm.eg.db")
+
+GO_enrich=enrichGO(gene = gene_symbol$ENTREZID,
+                   OrgDb = org.Mm.eg.db, 
+                   pvalueCutoff =1,	
+                   qvalueCutoff = 1,
+                   ont="all",
+                   readable =T)	
+GO_enrich=as.data.frame(GO_enrich)
+write.csv(GO_enrich, glue("{result_path}/GO_8w.csv"))
+
+GO_enrich %>% filter(ONTOLOGY %in% "BP") %>% arrange(qvalue) %>% head(n = 30) %>% pull(Description)
+select_pathway <- c("phagocytosis",
+                    "regulation of immune effector process",
+                    "myeloid cell differentiation",
+                    "regulation of cell-cell adhesion",
+                    "myeloid leukocyte migration",
+                    "regulation of leukocyte mediated immunity",
+                    "leukocyte proliferation",
+                    "myeloid leukocyte activation",
+                    "cell chemotaxis",
+                    "regulation of interleukin-6 production"
+)
+
+df_pathway <- GO_enrich %>% filter(ONTOLOGY %in% "BP") %>% 
+  filter(Description %in% select_pathway) %>% 
+  mutate(logq = -log10(qvalue)) %>% arrange(desc(Count),desc(logq)) %>% 
+  head(n = 10) 
+df_pathway$GeneRatioDraw <- lapply(df_pathway$GeneRatio, function(x){
+  g <- strsplit(x, "/")[[1]] %>% as.numeric()
+  g <- g[1]/g[2]
+  g <- round(g, 3)
+  return(g)
+}) %>% unlist()
+
+
+p <- ggplot(df_pathway, aes(x = GeneRatioDraw,
+                            y = reorder(Description, GeneRatioDraw)
+))+
+  geom_point(aes(size= Count, color = logq))+
+  guides(size=guide_legend(override.aes=list(shape=21, colour="black", fill="white"))) +
+  scale_color_gradientn(colours = viridis::viridis(256)) +
+  labs(
+    size="Gene counts",color="-log10(p-value)",x="Gene Ratio"
+  )+
+  theme_bw()+
+  theme(
+    axis.text.y = element_text(size = rel(1.5), color = "black"),
+    axis.title.x = element_text(size= rel(1.5)),
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )+
+  scale_size(range=c(5, 10))+
+  ggtitle(glue("MLSS(8w) vs ESS(4w)"))
+p
+save_plot(p, glue("{result_path}/dotplot_GO_8w"), width = 8, height = 6, if_pdf = T)
+
+##Fig.3G-H####
+mat <- cellchat@netP$prob
+max_val <- max(mat, na.rm = TRUE)
+mat_ccl <- cellchat@netP$prob[, , "CCL"]
+mat_cxcl <- cellchat@netP$prob[, , "CXCL"]
+# 矩阵对应元素直接相加
+mat_combined <- mat_ccl + mat_cxcl
+
+row_sum <- rowSums(mat_combined, na.rm = TRUE) # Sender 发出总强度
+col_sum <- colSums(mat_combined, na.rm = TRUE) # Receiver 接收总强度
+
+cell_types <- rownames(mat_combined)
+n_cells <- length(cell_types)
+
+cell_cols <- mycolor_merge
+names(cell_cols) <- cell_types
+
+# 提取 Sender (行) 和 Receiver (列) 的颜色向量
+sender_colors <- cell_cols[rownames(mat_combined)]
+receiver_colors <- cell_cols[colnames(mat_combined)]
+
+top_anno <- HeatmapAnnotation(
+  `Incoming signal\nstrength` = anno_barplot(
+    col_sum,
+    gp = gpar(
+      fill = receiver_colors,
+      col = NA              
+    ),
+    border = FALSE,
+    height = unit(1.8, "cm")
+  ),
+  annotation_name_side = "left",
+  annotation_name_gp = gpar(fontsize = 9, fontface = "bold")
+)
+
+right_anno <- rowAnnotation(
+  `Outgoing signal\nstrength` = anno_barplot(
+    row_sum,
+    gp = gpar(
+      fill = sender_colors, 
+      col = NA
+    ),
+    border = FALSE,
+    width = unit(1.8, "cm")
+  ),
+  annotation_name_side = "bottom",
+  annotation_name_gp = gpar(fontsize = 9, fontface = "bold")
+)
+
+
+ht <- Heatmap(
+  mat_combined,
+  name = "Communication\nProbability",
+  
+  col = col_fun_unified,
+  rect_gp = gpar(col = "white", lwd = 1),
+  
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  
+  top_annotation = top_anno,
+  right_annotation = right_anno,
+  
+  row_names_gp = gpar(fontsize = 10, fontface = "plain"),
+  column_names_gp = gpar(fontsize = 10, fontface = "plain"),
+  column_names_rot = 45,
+  
+  row_title = "Signaling source (Sender)",
+  row_title_gp = gpar(fontsize = 11, fontface = "bold"),
+  column_title = "Signaling target (Receiver)\nCCL + CXCL Combined Signal",
+  column_title_gp = gpar(fontsize = 11, fontface = "bold"),
+  
+  heatmap_legend_param = list(
+    title_gp = gpar(fontsize = 9, fontface = "bold"),
+    labels_gp = gpar(fontsize = 8),
+    grid_width = unit(0.4, "cm"),
+    legend_height = unit(3, "cm")
+  )
+)
+
+
+netAnalysis_contribution(cellchat, signaling = c("CCL","CXCL"),
+                         sources.use = "Kupffer",targets.use = "Monocyte")
+
+
+##Fig.3I####
+KC <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Kupffer_16_harmony.rds")
+obj <- subset(KC, time %in% c("0w","4w","8w"))
+result_path = "/data02/huzhiyang_03/FLD/result/10.巨噬细胞/轨迹分析/048"
+data <- GetAssayData(obj, assay = 'RNA', slot = 'count')
+cell_metadata <- obj@meta.data
+gene_annotation <- data.frame(gene_short_name = rownames(data))
+rownames(gene_annotation) <- rownames(data)
+cds <- new_cell_data_set(data,
+                         cell_metadata = cell_metadata,
+                         gene_metadata = gene_annotation)
+cds <- preprocess_cds(cds, num_dim = 15)
+
+cds <- reduce_dimension(cds)
+SingleCellExperiment::reducedDims(cds)[["UMAP"]]=obj@reductions[["umap"]]@cell.embeddings
+cds <- cluster_cells(cds)
+plot_cells(cds,color_cells_by = "partition")
+cds <- learn_graph(cds,
+                   learn_graph_control = list(prune_graph = T,
+                                              minimal_branch_len=3,#在图修剪过程中要保留的分支直径路径的最小长度。默认值是10。
+                                              euclidean_distance_ratio=3 #生成树中两个末端节点的欧氏距离与生成树上允许连接的任何连接点之间的最大距离之比。默认值为1。
+                   ))
+
+get_earliest_principal_node <- function(cds, time_bin=c('Monocyte')){
+  cell_ids <- which(colData(cds)[, "subtype"] == time_bin)
+  closest_vertex <- cds@principal_graph_aux[["UMAP"]]$pr_graph_cell_proj_closest_vertex
+  closest_vertex <- as.matrix(closest_vertex[colnames(cds), ])
+  root_pr_nodes <- igraph::V(principal_graph(cds)[["UMAP"]])$name[as.numeric(names(which.max(table(closest_vertex[cell_ids,]))))] # igraph::V()函数获取主成分图中的所有顶点信息
+  root_pr_nodes
+}
+cds <- order_cells(cds, root_pr_nodes=get_earliest_principal_node(cds))
+p3 <- plot_cells(cds,
+                 color_cells_by = "pseudotime",
+                 label_cell_groups=FALSE,
+                 label_leaves=FALSE,
+                 label_branch_points=FALSE,
+                 graph_label_size=1.5)
+p3
+
+pseudotime <- pseudotime(cds) %>% as.data.frame()
+pseudotime$barcode <- rownames(pseudotime)
+colnames(pseudotime)[1] <- "pseudotime"
+
+data <- cds@colData@listData %>% as.data.frame()
+data$barcode <- rownames(data)
+data_merged <- merge(data, pseudotime, by = "barcode")
+data_merged <- data_merged[data_merged$pseudotime != Inf,]
+
+library(ggridges)
+unique(data_merged$subtype_new)
+data_merged <- data_merged[data_merged$subtype_new %in% c("Macrophage", "Monocyte", "mono_KC"), ]
+data_merged$time <- factor(data_merged$time, levels = c("8w", "4w", "0w"))
+
+data_merged$subtype_new <- factor(data_merged$subtype_new, levels = c("mono_KC","Macrophage", "Monocyte"))
+p3_pretty <- ggplot(data_merged, aes(x = pseudotime, y = time, fill = subtype_new)) + 
+  geom_density_ridges(
+    aes(height = after_stat(count)), 
+    stat = "density",
+    adjust = 1.5, 
+    color = "white",  
+    linewidth = 0.4, 
+    scale = 0.95,  
+    alpha = 0.7,  
+    panel_scaling = TRUE
+  ) + 
+  scale_y_discrete(position = "left", expand = expansion(mult = c(0.01, 0.1))) + 
+  scale_x_continuous(position = "bottom", expand = c(0, 0)) + 
+  scale_fill_manual(values = FLD_col) +
+  theme_classic() + 
+  theme(
+    axis.line.y = element_line(color = "black", linewidth = 0.6),
+    axis.ticks.y = element_line(color = "black", linewidth = 0.5),
+    axis.ticks.length.y = unit(0.15, "cm"),
+    axis.line.x = element_line(color = "black", linewidth = 0.6),
+    axis.ticks.x = element_line(color = "black", linewidth = 0.5),
+    axis.text = element_text(colour = "black", size = 10, face = "plain"),
+    axis.title = element_text(colour = "black", size = 11, face = "plain"),
+    panel.grid = element_blank(),
+    panel.background = element_blank(),
+    legend.position = "right",
+    legend.title = element_text(face = "plain", size = 10),
+    legend.text = element_text(size = 9),
+    legend.key.size = unit(0.4, "cm")
+  ) +
+  labs(
+    x = "Pseudotime",
+    y = "",
+    fill = "Cell Subtype"
+  )
+
+print(p3_pretty)
+
+##Fig.3J####
+KC <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Kupffer_16_harmony.rds")
+
+obj <- AddModuleScore(KC, gl_1, name = "Cluster")
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+obj@meta.data$time <- factor(obj@meta.data$time,ordered = T,levels = c("0w","4w","8w","16w","24w","36w"))
+
+p_list <- list()
+for (pathway in names(gl_1)) {
+  dat_p <- obj@meta.data %>% filter(subtype_new %in% c("Macrophage","mono_KC","Resident_KC","Monocyte")) %>%
+    dplyr::select(c(group = subtype_new, score = pathway))
+  dat_p$group[dat_p$group %in% c("Macrophage","mono_KC","Monocyte")] <- "Mac & monoKC"
+  p_list[[pathway]] <- ggplot(dat_p, aes_string(x = "group",y = "score" ,fill = "group"))+
+    geom_boxplot(outliers = FALSE)+
+    scale_fill_manual(values=FLD_col)+
+    guides(fill=FALSE) +
+    stat_summary(fun.data = mean_fun, geom = "text", size=3 , color="black") +
+    labs(title = pathway,
+         x = "",
+         y = "") +
+    theme_classic(base_line_size = 0.5)+# 主题设置，这个是无线条主题 # 坐标轴的粗细
+    cowplot::panel_border(size = 0.5,color = "black") +
+    theme(plot.title = element_text(size = 10,colour = "black",hjust = 0.5),
+          # axis.title.y = element_text(size = 15, color = "black",face = "bold", vjust = 1.9, hjust = 0.5, angle = 90),
+          legend.title = element_text(color="black", # 修改图例的标题
+                                      size=10, face="plain"),
+          legend.text = element_text(color="black", # 设置图例标签文字
+                                     size = 10, face = "plain"),
+          axis.text.x = element_text(size = 10,  # 修改X轴上字体大小，
+                                     color = "black", # 颜色
+                                     face = "plain", #  face取值：plain普通，bold加粗，italic斜体，bold.italic斜体加粗
+                                     vjust = 0.5, # 位置
+                                     hjust = 0.5,
+                                     angle = 0), #角度
+          axis.text.y = element_text(size = 10,  color = "black",face = "plain", vjust = 0.5,
+                                     hjust = 0.5, angle = 0))+
+    stat_compare_means(comparisons= list(c("Resident_KC","Mac & monoKC")), label="p.signf",method = 'wilcox.test', tip.length = 0,#p.format
+                       symnum.args=list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1),
+                                        symbols = c("****", "***", "**", "*", "ns")))
+  
+}
+
+##Fig.3K####
+inflammatory_genes <- c("Il2", "Il7","Il9","Il15","Il21","Il3","Il5","Csf2",
+                        "Il13","Tslp","Il1a","Il1b","Il1r1","Il18","Il33","Il1f9","Il37",
+                        "Il6","Il31","Cntf","Ctf1","Lif","Spp1","Osm","Tnf","Lta","Tnfsf13b","Tnfsf13","Il17a","Il25",
+                        "Ifna16","Ifnab","Ifnb1","Ifnk","Ifng","Ccl2","Ccl3","Ccl4","Ccl5","Ccl7","Ccl11",
+                        "Cx3cl1","Cx3cr1","Cxcr4","Cxcl1","Cxcl2","Cxcl8","Cxcl9","Cxcl10","Cxcr2","Ccr5","Cxcr3")
+KC <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Kupffer_16_harmony.rds")
+obj <- KC %>% subset(subtype_new %in% c("Macrophage","mono_KC") & time %in% c("4w","8w")) 
+
+Idents(obj) <- "time"
+DEG <- FindMarkers(obj, ident.1 = "8w",ident.2 = "4w",min.pct = 0,logfc.threshold = 0)
+write.csv(DEG,"/data02/huzhiyang_03/FLD/result/10.巨噬细胞/KC_BDMC/DEG_Mac_monoKC.csv")
+df <- DEG[inflammatory_genes,]
+
+df <- filter(df,avg_log2FC > 0)
+df$gene <- rownames(df)
+
+p <- ggplot(df, aes(x = reorder(gene, avg_log2FC), y = avg_log2FC)) +
+  geom_segment(aes(xend = gene, yend = 0), color = "grey70", size = 0.8) +
+  geom_point(aes(color = avg_log2FC > 0, size = abs(avg_log2FC))) +
+  coord_flip() + 
+  scale_color_manual(values = c("TRUE" = "#d95f02", "FALSE" = "#7570b3"), 
+                     labels = c("TRUE" = "Up", "FALSE" = "Down"),
+                     name = "Direction") +
+  theme_classic(base_line_size = 0.5)+# 主题设置，这个是无线条主题 # 坐标轴的粗细
+  cowplot::panel_border(size = 0.5,color = "black") +
+  theme(plot.title = element_text(size = 10,colour = "black",hjust = 0.5),
+        legend.title = element_text(color="black", # 修改图例的标题
+                                    size=10, face="plain"),
+        legend.text = element_text(color="black", # 设置图例标签文字
+                                   size = 10, face = "plain"),
+        axis.text.x = element_text(size = 10,  # 修改X轴上字体大小，
+                                   color = "black", # 颜色
+                                   face = "plain", #  face取值：plain普通，bold加粗，italic斜体，bold.italic斜体加粗
+                                   vjust = 0.5, # 位置
+                                   hjust = 0.5,
+                                   angle = 0), #角度
+        axis.text.y = element_text(size = 10,  color = "black",face = "plain", vjust = 0.5,
+                                   hjust = 0.5, angle = 0))+
+  labs(x = NULL, y = "log2 Fold Change (8w vs 4w)", 
+       title = "Expression of Pro-inflammatory genes (Mac & monoKC)")
