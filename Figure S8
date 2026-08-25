@@ -1,0 +1,123 @@
+##Fig.S8A-B####
+gl_1 <- c("Plin2", "Plin5", "Pnpla2", "Abhd5", "Fabp1", "Rarb", "Rara", "Lrat", "Rbp4", "Dgat1")
+gl_1 <- c("Acta2", "Igfbp5", "Igfbp6" , "S100a6", "Krt19", "Ccl2", "Cxcl1","Cxcl12", "Col1a2", "Col3a1", "Col5a2")
+
+HSC <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/HSC_16.rds")
+obj <- AddModuleScore(HSC , gl_1, name = "Cluster")
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+for (pathway in names(gl_1)) {
+  dat_p <- obj@meta.data %>% # filter(time %in% c("0w","4w","8w")) %>% 
+    dplyr::select(c(group = subtype_new, score = pathway))
+  
+  sort_cell <- dat_p %>%
+    group_by(group) %>% summarise(mean = mean(score)) %>%
+    arrange(desc(mean)) %>% pull(group)
+  dat_p$group <- factor(dat_p$group, levels = sort_cell)
+  
+  p_list[[pathway]] <- ggplot(dat_p, aes_string(x = "group",y = "score" ,fill = "group"))+
+    geom_boxplot(outliers = FALSE)+
+    scale_fill_manual(values=c(mycolor_new))+ 
+    guides(fill=FALSE) +
+    stat_summary(fun.data = mean_fun, geom = "text", size=3 , color="black") +
+    labs(title = pathway,
+         x = '',
+         y = '') +
+    theme_classic(base_line_size = 0.5)+
+    theme(plot.title = element_text(size = 12,colour = "black",hjust = 0.5),
+          legend.title = element_text(color="black", 
+                                      size=10, face="bold"),
+          legend.text = element_text(color="black", 
+                                     size = 10, face = "bold"),
+          axis.text.x = element_text(size = 10,  
+                                     color = "black",
+                                     face = "bold", 
+                                     vjust = 1,
+                                     hjust = 0.95,
+                                     angle = 45), 
+          axis.text.y = element_text(size = 10,  color = "black",face = "bold", vjust = 0.5,
+                                     hjust = 0.5, angle = 0))
+}
+
+
+
+
+##Fig.S8C####
+GO_Serpina1e <- read.csv("/data02/huzhiyang_03/FLD/result/16.HSC/cluster_feature/GO_HSC-Ebf1.csv",header = T, row.names = 1 ) %>% filter(ONTOLOGY == "BP")
+GO_Ccl2 <- read.csv("/data02/huzhiyang_03/FLD/result/16.HSC/cluster_feature/GO_HSC-Ccl2.csv",header = T, row.names = 1 ) %>% filter(ONTOLOGY == "BP")
+GO_Wt1 <- read.csv("/data02/huzhiyang_03/FLD/result/16.HSC/cluster_feature/GO_HSC-Wt1.csv",header = T, row.names = 1 ) %>% filter(ONTOLOGY == "BP")
+
+
+Ebf1_pathway <- GO_Serpina1e  %>% mutate(logq = -log10(qvalue) ) %>% #arrange(desc(Count),desc(logq)) %>% 
+  top_n(n = 10,wt = logq) %>% mutate(group = "HSC-Ebf1")
+Ccl2_pathway <- GO_Ccl2  %>% mutate(logq = -log10(qvalue) ) %>% #arrange(desc(Count),desc(logq)) %>% 
+  top_n(n = 10,wt = logq) %>% mutate(group = "HSC-Ccl2")
+Wt1_pathway <- GO_Wt1  %>% mutate(logq = -log10(qvalue) ) %>% #arrange(desc(Count),desc(logq)) %>% 
+  top_n(n = 10,wt = logq) %>% mutate(group = "HSC-Wt1")
+
+
+df_pathway <- rbind(Ebf1_pathway, Ccl2_pathway,Wt1_pathway) %>% dplyr::select(c(Description, pvalue, Count, logq, group))
+
+df_pathway$unique_id <- paste0(df_pathway$Description, " (", df_pathway$group, ")")
+df_pathway$unique_id <- factor(df_pathway$unique_id,levels = rev(df_pathway$unique_id))
+
+p <- ggplot(data=df_pathway,aes(x = logq,y = unique_id,fill=group))  +  #fill=PValue，根据PValue填充颜色；color=PValue根据PValue改变线的颜色  
+  geom_bar(stat="identity",width=0.8 ) + 
+  ylim(df_pathway$unique_id) + #柱状图宽度与y轴显示顺序
+  scale_y_discrete(labels = df_pathway$Description) +  # 用 Description 作为标签
+  theme_test() + #调整背景色  
+  scale_fill_manual(values=c("#FFCCBC", "#E1EFFF","#FFE0B2")) +  #调节填充的颜色 
+  labs(x="-log10(FDR)",y="",title="GO term") + #设置图内标签（x、y轴、标题）
+  theme(axis.text=element_text(size=10,color="black"),  
+        axis.title = element_text(size=16),title = element_text(size=13))
+p
+
+##Fig.S8D####
+obj <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Kupffer_16_harmony.rds")
+obj <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/HSC_16.rds")
+
+gene <-c("Mmp1b","Mmp2","Mmp3","Mmp7","Mmp8","Mmp9","Mmp10","Mmp11","Mmp12","Mmp13","Mmp14","Mmp15","Mmp16",
+         "Mmp17","Mmp19","Mmp20","Mmp21","Mmp23","Mmp24","Mmp25","Mmp27","Mmp28")
+genelist_name <- "Mmp_family"
+
+
+colnames_matrix <- c('0w','4w',"8w","16w") 
+matrix_mean1<- matrix(nrow =length(gene) ,ncol =length(colnames_matrix),
+                      dimnames = list(gene,colnames_matrix))
+df <- obj@meta.data
+for (cur_gene in gene ) {
+  for (cur_group in colnames_matrix) {
+    if (cur_gene %in% rownames(obj)) {
+      df[[cur_gene]] <- obj@assays$RNA@data[cur_gene,]
+      a <- subset(df, time == cur_group)
+      b<- mean(a[[cur_gene]])
+      matrix_mean1[cur_gene,cur_group] <- b
+    }else{
+      print(glue('{cur_gene}_not_in_countmatrix'))
+    }
+  }
+}
+scaled_mat <- scale(t(matrix_mean1), center=TRUE, scale=TRUE)
+scaled_mat <- as.data.frame(t(scaled_mat))
+
+scaled_mat <- matrix_mean1
+scaled_mat$gene <- rownames(scaled_mat)
+matrix_mean1 <- arrange(scaled_mat,desc(Mature))
+rownames(matrix_mean1) <- matrix_mean1$gene
+matrix_mean1 <- matrix_mean1[,-4]
+
+annotation_row <- data.frame(
+  genelist_name = rep(genelist_name,length(gene)))
+rownames(annotation_row) <- rownames(matrix_mean1)
+
+pheatmap::pheatmap(matrix_mean1,
+                   #scale = 'row',
+                   cluster_cols = F,
+                   cluster_rows = F,
+                   display_numbers = F,
+                   # gaps_col = c(3,6,9),
+                   #gaps_row = c(15),
+                   # annotation_row = annotation_row,
+                   border_color = "white",
+                   
+                   main = genelist_name,
+                   angle_col = 45)
