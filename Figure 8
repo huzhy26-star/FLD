@@ -1,0 +1,598 @@
+##Fig.8B####
+library(RANN)
+library(spdep)
+
+moran_index <- c()
+for (samplename in c("ND24","FLD8","FLD24","FLD36")) {
+  print(samplename)
+  obj <- readRDS(glue("/data02/huzhiyang_03/FLD/RDS_file/ST/RDS_大类/{samplename}.rds"))
+  
+  # df <- obj@meta.data %>% dplyr::select(c(Liver_zone,row,col))
+  # calc_label_clustering <- function(df, target_group) {
+  #   # 准备数据：将目标标签转为 1，其余转为 0
+  #   df <- df %>%
+  #     mutate(is_target = if_else(Liver_zone == target_group, 1, 0))
+  #   
+  #   coords <- as.matrix(df[, c("row", "col")])
+  #   vals <- df$is_target
+  #   
+  #   # 2. RANN 快速搜索邻居 (数万点建议 k=10 以获得更稳健的局部特征)
+  #   nn <- nn2(coords, k = 11) 
+  #   nb_list <- lapply(1:nrow(nn$nn.idx), function(i) nn$nn.idx[i, -1])
+  #   class(nb_list) <- "nb"
+  #   
+  #   # 3. 转换为空间权重矩阵
+  #   lw <- nb2listw(nb_list, style = "B", zero.policy = TRUE) # 分类变量建议用 Binary 权重
+  #   
+  #   # 4. 计算莫兰指数
+  #   # 使用 moran.mc (蒙特卡洛模拟) 对 0/1 变量更稳健，或者直接用 moran.test
+  #   m_test <- moran.test(vals, lw, zero.policy = TRUE, alternative = "greater")
+  #   
+  #   return(data.frame(
+  #     Group = target_group,
+  #     Moran_I = m_test$estimate[1],
+  #     P_value = m_test$p.value,
+  #     Observed = m_test$estimate[1],
+  #     Expected = m_test$estimate[2],
+  #     Statistic = m_test$statistic
+  #   ))
+  # }
+  # 
+  # # 5. 循环计算所有标签的聚集程度
+  # all_groups <- unique(df$Liver_zone)
+  # cluster_results <- map_df(all_groups, ~calc_label_clustering(df, .x))
+  # 
+  # print(cluster_results)
+  
+  
+  
+  df <- obj@meta.data %>% dplyr::select(c(Liver_zone,row,col))
+  # 1. 准备权重矩阵 (对全量数据建立)
+  coords <- as.matrix(df[, c("row", "col")])
+  nn <- nn2(coords, k = 11)
+  nb_list <- lapply(1:nrow(nn$nn.idx), function(i) nn$nn.idx[i, -1])
+  class(nb_list) <- "nb"
+  lw <- nb2listw(nb_list, style = "B") # 采用 Binary 权重
+  
+  # 2. 计算各组的 Moran's I
+  all_groups <- unique(df$Liver_zone)
+  group_stats <- map_df(all_groups, function(g){
+    vals <- if_else(df$Liver_zone == g, 1, 0)
+    m_test <- moran.test(vals, lw, zero.policy = TRUE)
+    data.frame(
+      Liver_zone = g,
+      Count = sum(vals),
+      Moran_I = m_test$estimate[1],
+      P_val = m_test$p.value
+    )
+  })
+  
+  # 3. 计算综合全局指数 (Global Weighted Index)
+  # 使用各组点数占比作为权重进行加权平均
+  global_combined_index <- sum(group_stats$Moran_I * group_stats$Count) / sum(group_stats$Count)
+  
+  print(group_stats)
+  cat("综合全局莫兰指数为:", global_combined_index)
+  moran_index <- c(global_combined_index,moran_index)
+}
+
+df_moran <- data.frame(samplename = c("FLD36","FLD24","FLD8","ND24"),
+                       global_moran = moran_index)
+write.csv(df_moran,"/data02/huzhiyang_03/FLD/result/28.ST/Moran/Global_moran.csv")
+
+df_moran <- data.frame(
+  PV_moran = c(0.5779,0.5881,0.4482,0.1593),
+  CV_moran = c(0.4986,0.4625,0.4109,0.2525),
+  Global_moran = c(0.4339,0.4292,0.3277,0.1292),
+  samplename = c("ND24","FLD8","FLD24","FLD36")
+)
+df <- reshape2::melt(df_moran,variable.name = "samplename")
+colnames(df) <- c("samplename","Group","Moran_index")
+
+df$samplename <- factor(df$samplename, levels = c("ND24","FLD8","FLD24","FLD36"))
+
+p_mean <- ggplot(df, aes_string("samplename", "Moran_index", color = "Group", group = "Group"))+
+  geom_point(size = 2)+
+  geom_line(size = 1)+
+  labs(title = '',
+       x = '',
+       y = ' ' ) +
+  scale_color_manual(values = c("CV_moran"="#F7CCC1","Global_moran"= "#FFC98B","PV_moran"= "#BCD1EC")) + 
+  theme_classic(base_line_size = 0.5) + # 主题设置,这个是无线条主题 # 坐标轴的粗细
+  theme(plot.title = element_text(size = 15,colour = "black",hjust = 0.5),
+        axis.title.y = element_text(size = 15, color = "black",face = "bold", vjust = 1.9, hjust = 0.5, angle = 90),
+        legend.title = element_text(color="black", # 修改图例的标题
+                                    size=15, face="plain"),
+        legend.text = element_text(color="black", # 设置图例标签文字
+                                   size = 10, face = "plain"),
+        axis.text.x = element_text(size = 13,  # 修改X轴上字体大小,
+                                   color = "black", # 颜色
+                                   face = "plain", #  face取值：plain普通,bold加粗,italic斜体,bold.italic斜体加粗
+                                   vjust = 1, # 位置
+                                   hjust = 0.5, 
+                                   angle = 0), #角度
+        axis.text.y = element_text(size = 13,  color = "black",face = "plain", vjust = 0.5, 
+                                   hjust = 0.5, angle = 0))
+p_mean
+
+##Fig.8C-D####
+gl_syn <- read.gmt(glue("/data02/huzhiyang_03/FLD/result/geneset/bile_xenobiotic.gmt"))
+gl_syn <- gl_syn %>% filter(nchar(gene) > 0)
+gl_1 <- unique(gl_syn$term) %>%
+  map(~ gl_syn %>% filter(term == .x) %>% pull(gene) %>% unique()) %>%
+  setNames(unique(gl_syn$term))
+
+hep <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Hepatocyte_16.rds")
+obj <- AddModuleScore(hep, features=gl_1, name = "") 
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+
+p_list <- list()
+for (pathway in names(gl_1)) {
+  dat_p <- obj@meta.data %>%
+    dplyr::select(c(time, score = pathway))
+  p_list[[pathway]] <- ggplot(dat_p, aes_string(x = "time",y = "score" ,fill = "time"))+
+    geom_boxplot(outliers = FALSE)+
+    scale_fill_manual(values=c(FLD_col))+ 
+    guides(fill=FALSE) +
+    stat_summary(fun.data = mean_fun, geom = "text", size=3 , color="black") +
+    labs(title = pathway,
+         x = '',
+         y = "") +
+    theme_classic(base_line_size = 0.5)+
+    theme(plot.title = element_text(size = 10,colour = "black",hjust = 0.5),
+          legend.title = element_text(color="black", 
+                                      size=10, face="bold"),
+          legend.text = element_text(color="black", 
+                                     size = 10, face = "bold"),
+          axis.text.x = element_text(size = 10,  
+                                     color = "black", 
+                                     face = "bold", 
+                                     vjust = 1,
+                                     hjust = 0.95, 
+                                     angle = 45), 
+          axis.text.y = element_text(size = 13,  color = "black",face = "bold", vjust = 0.5, 
+                                     hjust = 0.5, angle = 0))+
+    stat_compare_means(comparisons =  list(c("0w","4w"),c("4w","8w"),c("8w","16w"),c("16w","24w"),c("24w","36w")),
+                       method = 'wilcox.test',hide.ns = TRUE,label = "p.format",bracket.size = 0.1,size = 2)
+}
+wrap_plots(p_list, ncol = 2)
+
+##Fig.8E-F####
+gl_syn <- read.gmt(glue("/data02/huzhiyang_03/FLD/result/09.核测序/凋亡与转运/Apoptosis.gmt"))
+gl_syn <- gl_syn %>% filter(nchar(gene) > 0)
+gl_1 <- unique(gl_syn$term) %>%
+  map(~ gl_syn %>% filter(term == .x) %>% pull(gene) %>% unique()) %>%
+  setNames(unique(gl_syn$term))
+Endo <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Endothelial_16.rds")
+Endo <- Endo[,!Endo@meta.data$subtype %in% c("Lymphatic","Cycling_EC","Artery","Vein_pcv")]
+obj <- AddModuleScore(Endo , gl_1, name = "Cluster")
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+
+p_list <- list()
+metadata <- obj@meta.data #%>% filter(subtype == cell)
+# p_list <- list()
+for (pathway in names(gl_1)) {
+  dat_p <- metadata %>% #filter(time %in% c("0w","4w","8w","16w")) %>% 
+    dplyr::select(c(group = time, score = pathway))
+  p <- ggplot(dat_p, aes_string(x = "group",y = "score" ,fill = "group"))+
+    geom_boxplot(outliers = FALSE)+
+    scale_fill_manual(values=c(FLD_col))+ 
+    guides(fill=FALSE) +
+    labs(title = pathway,
+         x = "",
+         y = "All LSEC") +
+    theme_classic(base_line_size = 0.5)+
+    theme(plot.title = element_text(size = 8,colour = "black",hjust = 0.5),
+          legend.title = element_text(color="black",
+                                      size=10, face="plain"),
+          legend.text = element_text(color="black",
+                                     size = 10, face = "plain"),
+          axis.text.x = element_text(size = 10, 
+                                     color = "black",
+                                     face = "plain", 
+                                     vjust = 1,
+                                     hjust = 0.95, 
+                                     angle = 45),
+          axis.text.y = element_text(size = 10,  color = "black",face = "bold", vjust = 0.5, 
+                                     hjust = 0.5, angle = 0))
+  
+  p_list[[cell]] <- p +
+    stat_compare_means(comparisons= list(c("4w","0w"),c("4w","8w"),c("8w","16w"),c("24w","36w"),c("24w","16w")), 
+                       label="p.signf",method = 'wilcox.test', tip.length = 0,#p.format
+                       symnum.args=list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1),
+                                        symbols = c("****", "***", "**", "*", "ns")))
+}
+wrap_plots(p_list,ncol = 1)
+
+##Fig.8F####
+gl_syn <- read.gmt(glue("/data02/huzhiyang_03/FLD/result/26.内皮细胞/凋亡_增殖/endo_proliferation.gmt"))
+gl_syn <- gl_syn %>% filter(nchar(gene) > 0) 
+gl_1 <- unique(gl_syn$term) %>%
+  map(~ gl_syn %>% filter(term == .x) %>% pull(gene) %>% unique()) %>%
+  setNames(unique(gl_syn$term))
+
+LSEC <- subset(Endo,subtype %in% c("Lyve1-LSEC","Prkcb-LSEC","Serpina1e-LSEC","Vegfc-LSEC"))
+obj <- AddModuleScore(LSEC , gl_1, name = "Cluster")
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+
+p_list <- list()
+metadata <- obj@meta.data #%>% filter(subtype == cell)
+for (pathway in names(gl_1)) {
+  dat_p <- metadata %>% #filter(time %in% c("0w","4w","8w","16w")) %>% 
+    dplyr::select(c(group = time, score = pathway))
+  p <- ggplot(dat_p, aes_string(x = "group",y = "score" ,fill = "group"))+
+    geom_boxplot(outliers = FALSE)+
+    scale_fill_manual(values=c(FLD_col))+ 
+    guides(fill=FALSE) +
+    labs(title = pathway,
+         x = "",
+         y = "All LSEC") +
+    theme_classic(base_line_size = 0.5)+
+    theme(plot.title = element_text(size = 8,colour = "black",hjust = 0.5),
+          legend.title = element_text(color="black",
+                                      size=10, face="plain"),
+          legend.text = element_text(color="black",
+                                     size = 10, face = "plain"),
+          axis.text.x = element_text(size = 10, 
+                                     color = "black",
+                                     face = "plain", 
+                                     vjust = 1,
+                                     hjust = 0.95, 
+                                     angle = 45),
+          axis.text.y = element_text(size = 10,  color = "black",face = "bold", vjust = 0.5, 
+                                     hjust = 0.5, angle = 0))
+  
+  p_list[[pathway]] <- p +
+    stat_compare_means(comparisons= list(c("4w","0w"),c("4w","8w"),c("8w","16w"),c("24w","36w"),c("24w","16w")), 
+                       label="p.signf",method = 'wilcox.test', tip.length = 0,#p.format
+                       symnum.args=list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1),
+                                        symbols = c("****", "***", "**", "*", "ns")))
+}
+wrap_plots(p_list,ncol = 1)
+
+
+##Fig.8G-H####
+Endo <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Endothelial_16.rds")
+unique(Endo@meta.data$subtype)
+data <- subset(Endo, subtype %in% c("Vegfc-LSEC", "Serpina1e-LSEC", "Prkcb-LSEC", "Lyve1-LSEC"))
+unique(data@meta.data$subtype)
+data@meta.data$Minor_celltype <- data@meta.data$subtype
+unique(data@meta.data$time)
+data_sub <- subset(data,  time %in% c("24w", "36w"))
+unique(data_sub@meta.data$time)
+DimPlot(data_sub, reduction = "umap", label = T, group.by = "Minor_celltype")
+
+scRNA <- data_sub
+expr_mtx <- GetAssayData(data_sub, assay = 'RNA', slot = 'counts')
+cell_metadata <- data_sub@meta.data
+gene_annotation <- data.frame(gene_short_name = rownames(data_sub))
+rownames(gene_annotation) <- rownames(data_sub)
+
+cds <- new_cell_data_set(expr_mtx, 
+                         cell_metadata = cell_metadata[colnames(expr_mtx),], 
+                         gene_metadata = gene_annotation)
+
+cds <- preprocess_cds(cds, num_dim = 15)
+plot_pc_variance_explained(cds)
+
+cds <- reduce_dimension(cds, preprocess_method = "PCA")
+
+cds.embed <- cds@int_colData$reducedDims$UMAP  
+int.embed <- Embeddings(data_sub, reduction = "umap") 
+int.embed <- int.embed[rownames(cds.embed), ] 
+cds@int_colData$reducedDims$UMAP <- int.embed 
+
+cds <- cluster_cells(cds)
+cds <- learn_graph(cds,
+                   learn_graph_control = list(prune_graph = T,
+                                              minimal_branch_len=8,
+                                              euclidean_distance_ratio=3
+                                              
+                   ))
+
+
+get_earliest_principal_node <- function(cds, time_bin="Serpina1e-LSEC"){
+  cell_ids <- which(colData(cds)[, "Minor_celltype"] == time_bin)
+  
+  closest_vertex <-
+    cds@principal_graph_aux[["UMAP"]]$pr_graph_cell_proj_closest_vertex
+  closest_vertex <- as.matrix(closest_vertex[colnames(cds), ])
+  root_pr_nodes <-
+    igraph::V(principal_graph(cds)[["UMAP"]])$name[as.numeric(names
+                                                              (which.max(table(closest_vertex[cell_ids,]))))]
+  
+  root_pr_nodes
+}
+cds <- order_cells(cds, root_pr_nodes=get_earliest_principal_node(cds))
+
+p2 <- plot_cells(cds,
+                 color_cells_by = "pseudotime",
+                 label_cell_groups=F,
+                 label_leaves=FALSE,
+                 label_branch_points=FALSE,
+                 label_roots =F,
+                 graph_label_size=3,
+                 cell_size=1,
+                 trajectory_graph_color='black',
+                 trajectory_graph_segment_size = 1)
+p2
+
+
+pseudotime <- pseudotime(cds) %>% as.data.frame()
+pseudotime$barcode <- rownames(pseudotime)
+colnames(pseudotime)[1] <- "pseudotime"
+
+data <- cds@colData@listData %>% as.data.frame()
+data$barcode <- rownames(data)
+data_merged <- merge(data, pseudotime, by = "barcode")
+data_merged <- data_merged[data_merged$pseudotime != Inf,]
+
+library(ggridges)
+unique(data_merged$subtype)
+
+data_merged$subtype <- factor(data_merged$subtype, levels = c("Lyve1-LSEC","Vegfc-LSEC","Prkcb-LSEC","Serpina1e-LSEC"))
+data_merged$time <- factor(data_merged$time, levels = c("36w","24w"))
+p3_pretty <- ggplot(data_merged, aes(x = pseudotime, y = time, fill = subtype)) + 
+  geom_density_ridges(
+    aes(height = after_stat(count)), 
+    stat = "density",
+    adjust = 1.5, 
+    color = "white",  
+    linewidth = 0.4, 
+    scale = 0.95,  
+    alpha = 0.7,  
+    panel_scaling = TRUE
+  ) + 
+  scale_y_discrete(position = "left", expand = expansion(mult = c(0.01, 0.1))) + 
+  scale_x_continuous(position = "bottom", expand = c(0, 0)) + 
+  scale_fill_manual(values = FLD_col) +
+  theme_classic() + 
+  theme(
+    axis.line.y = element_line(color = "black", linewidth = 0.6),
+    axis.ticks.y = element_line(color = "black", linewidth = 0.5),
+    axis.ticks.length.y = unit(0.15, "cm"),
+    axis.line.x = element_line(color = "black", linewidth = 0.6),
+    axis.ticks.x = element_line(color = "black", linewidth = 0.5),
+    axis.text = element_text(colour = "black", size = 10, face = "plain"),
+    axis.title = element_text(colour = "black", size = 11, face = "plain"),
+    panel.grid = element_blank(),
+    panel.background = element_blank(),
+    legend.position = "right",
+    legend.title = element_text(face = "plain", size = 10),
+    legend.text = element_text(size = 9),
+    legend.key.size = unit(0.4, "cm")
+  ) +
+  labs(
+    x = "Pseudotime",
+    y = "",
+    fill = "Cell Subtype"
+  )
+p3_pretty
+
+
+gl_syn <- read.gmt(glue("/data02/huzhiyang_03/FLD/result/26.内皮细胞/凋亡_增殖/endo_proliferation.gmt"))
+gl_syn <- gl_syn %>% filter(nchar(gene) > 0)  
+gl_1 <- unique(gl_syn$term) %>%
+  map(~ gl_syn %>% filter(term == .x) %>% pull(gene) %>% unique()) %>%
+  setNames(unique(gl_syn$term))
+
+obj <- AddModuleScore(scRNA , gl_1, name = "Cluster",ctrl = 1000)
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+
+p3 <- FeaturePlot(obj, features = c("blood vessel morphogenesis"),
+                  ncol = 1, cols = viridis::viridis(10),
+                  min.cutoff = quantile(obj$`blood vessel morphogenesis`, 0.1),    # 使用5%分位数作为下限
+                  max.cutoff =  quantile(obj$`blood vessel morphogenesis`, 0.9))
+p3
+
+
+##Fig.8I-J####
+gl_met <- read.gmt("/data02/huzhiyang_03/FLD/result/geneset/hep_proliferation_mouse.gmt")
+gl_met <- gl_met %>% filter(nchar(gene) > 0) 
+gl_1 <- unique(gl_met$term) %>%
+  map(~ gl_met %>% filter(term == .x) %>% pull(gene) %>% unique()) %>%
+  setNames(unique(gl_met$term))
+names(gl_1) <- "Cell Cycle"
+
+Hepatocyte <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Hepatocyte_16.rds")
+obj <- AddModuleScore(Hepatocyte, features=gl_1, name = "") 
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+
+p_list <- list()
+for (pathway in names(gl_1)) {
+  dat_p <- obj@meta.data %>%
+    filter(time %in% c("24w","36w")) %>% 
+    dplyr::select(c(time, score = pathway))
+  p_list[[pathway]] <- ggplot(dat_p, aes_string(x = "time",y = "score" ,fill = "time"))+
+    geom_violin(width = 0.8)+
+    geom_boxplot(width=0.1, fill="white",outlier.shape = NA)+
+    scale_fill_manual(values=c(FLD_col))+ 
+    guides(fill=FALSE) +
+    stat_summary(fun.data = mean_fun, geom = "text", size=3 , color="black") +
+    labs(title = pathway,
+         x = '',
+         y = "Hepatocyte") +
+    theme_classic()+
+    cowplot::panel_border(size = 0.5,color = "black")+
+    theme(plot.title = element_text(size = 10,colour = "black",hjust = 0.5),
+          legend.title = element_text(color="black", 
+                                      size=10, face="plain"),
+          legend.text = element_text(color="black",
+                                     size = 10, face = "plain"),
+          axis.text.x = element_text(size = 10,
+                                     color = "black",
+                                     face = "plain", 
+                                     vjust = 1,
+                                     hjust = 0.95, 
+                                     angle = 45), 
+          axis.text.y = element_text(size = 10,  color = "black",face = "plain", vjust = 0.5, 
+                                     hjust = 0.5, angle = 0))+
+    stat_compare_means(comparisons=list(c("24w","36w")), label="p.signf",method = 'wilcox.test', tip.length = 0,#p.format 
+                       symnum.args=list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1),
+                                        symbols = c("****", "***", "**", "*", "ns"))) 
+}
+wrap_plots(p_list, ncol = 1)
+
+
+gl_syn <- read.gmt(glue("/data02/huzhiyang_03/FLD/result/geneset/senescence.gmt"))
+gl_syn <- gl_syn %>% filter(nchar(gene) > 0) 
+gl_1 <- unique(gl_syn$term) %>%
+  map(~ gl_syn %>% filter(term == .x) %>% pull(gene) %>% unique()) %>%
+  setNames(unique(gl_syn$term))
+hep <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Hepatocyte_16.rds")
+obj <- AddModuleScore(hep, features=gl_1, name = "GOBP")
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+
+p_list <- list()
+for (pathway in names(gl_1)) {
+  dat_p <- obj@meta.data %>%
+    filter(time %in% c("24w","36w")) %>%
+    dplyr::select(c(time, score = pathway))
+  dat_p$time <- factor(dat_p$time, levels = c("0w","4w","8w","16w","24w","36w"))
+  
+  p_list[[pathway]] <- ggplot(dat_p, aes_string(x = "time",y = "score" ,fill = "time"))+
+    geom_violin(width = 0.8)+
+    geom_boxplot(width=0.1, fill="white",outlier.shape = NA)+
+    scale_fill_manual(values=c(FLD_col))+ 
+    guides(fill=FALSE) +
+    stat_summary(fun.data = mean_fun, geom = "text", size=3 , color="black") +
+    labs(title = pathway,
+         x = '',
+         y = "Hepatocyte") +
+    theme_classic()+
+    cowplot::panel_border(size = 0.5,color = "black")+
+    theme(plot.title = element_text(size = 10,colour = "black",hjust = 0.5),
+          legend.title = element_text(color="black", 
+                                      size=10, face="plain"),
+          legend.text = element_text(color="black",
+                                     size = 10, face = "plain"),
+          axis.text.x = element_text(size = 10,
+                                     color = "black",
+                                     face = "plain", 
+                                     vjust = 1,
+                                     hjust = 0.95, 
+                                     angle = 45), 
+          axis.text.y = element_text(size = 10,  color = "black",face = "plain", vjust = 0.5, 
+                                     hjust = 0.5, angle = 0))+
+    stat_compare_means(comparisons=list(c("24w","36w")), label="p.signf",method = 'wilcox.test', tip.length = 0,#p.format  c("0w","4w"),c("4w","8w"),c("8w","16w"),c("16w","24w"),
+                       symnum.args=list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1),
+                                        symbols = c("****", "***", "**", "*", "ns"))) 
+}
+wrap_plots(p_list, ncol = 1)
+
+##Fig.8K####
+library(infercnv)
+infercnv_obj <- readRDS("/data02/huzhiyang_03/FLD/result/28.ST/infercnv/run.final.infercnv_obj")
+expr <- infercnv_obj@expr.data
+ncol(expr)
+merge <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/ST/RDS_大类/merged_rds.rds")
+table(merge$zone_rank,merge$Liver_zone)
+merge@meta.data$barcode <- rownames(merge@meta.data)
+merge@meta.data$sample_zone  <- paste0(merge@meta.data$sample,"_",merge@meta.data$Liver_zone)
+
+merge_info <- merge@meta.data[,c("barcode","sample_zone","sample","Liver_zone")]
+merge_inuse <- subset(merge_info, barcode %in% colnames(expr))
+
+cnv_scores <- colMeans(abs(expr - 1), na.rm = TRUE)
+result <- data.frame(barcode = colnames(expr), cnv_score = cnv_scores)
+result <- left_join(result, merge_inuse)
+
+
+dat_p <- filter(result, Liver_zone != "Mid")
+dat_p$sample <- factor(dat_p$sample, levels = c("ND","FLD8","FLD24","FLD36"))
+dat_p$Liver_zone <- factor(dat_p$Liver_zone, levels = c("CV","Mid","PV"))
+
+p2 <- ggplot(dat_p, aes(x = sample, y = cnv_score, color = Liver_zone, group = Liver_zone)) +
+  stat_summary(fun = mean, geom = "line", size = 1.2) +
+  stat_summary(fun = mean, geom = "point", size = 3) +
+  
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", width = 0.15, size = 0.8) +
+  theme_classic(base_size = 14) +
+  labs(x = "Time Points", y = "Value", color = "Group") +
+  scale_color_manual(values = FLD_col)
+save_plot(p2, "/data02/huzhiyang_03/FLD/result/28.ST/infercnv/lineplot_cnv_quan",if_pdf = T,width = 8,height = 4)
+
+
+##Fig.8L####
+gl_met <- read.gmt("/data02/huzhiyang_03/FLD/result/geneset/抗原提呈.gmt")
+gl_met <- gl_met %>% filter(nchar(gene) > 0)
+gl_1 <- unique(gl_met$term) %>%
+  map(~ gl_met %>% filter(term == .x) %>% pull(gene) %>% unique()) %>%
+  setNames(unique(gl_met$term))
+
+DC_neu <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/合并scsn/DC_Neu.rds")
+DC <- subset(DC_neu, Cellgroup == "DC")
+obj <- AddModuleScore(DC, features=gl_1, name = "GOBP") 
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+
+p_list <- list()
+for (pathway in names(gl_1)) {
+  dat_p <- obj@meta.data %>%
+    filter(time %in% c("24w","36w")) %>% 
+    dplyr::select(c(time, score = pathway,SubCellType))
+  dat_p$time <- factor(dat_p$time, levels = c("24w","36w"))
+  
+  p_list[[pathway]] <- ggplot(dat_p, aes_string(x = "time",y = "score" ,fill = "time"))+
+    geom_violin(width = 0.8)+
+    geom_boxplot(width=0.1, fill="white",outlier.shape = NA)+
+    scale_fill_manual(values=c(FLD_col))+ 
+    guides(fill=FALSE) +
+    stat_summary(fun.data = mean_fun, geom = "text", size=3 , color="black") +
+    labs(title = pathway,
+         x = '',
+         y = "DC") +
+    theme_classic()+
+    cowplot::panel_border(size = 0.5,color = "black")+
+    theme(plot.title = element_text(size = 10,colour = "black",hjust = 0.5),
+          legend.title = element_text(color="black", 
+                                      size=10, face="plain"),
+          legend.text = element_text(color="black", 
+                                     size = 10, face = "plain"),
+          axis.text.x = element_text(size = 10, 
+                                     color = "black", 
+                                     face = "plain", 
+                                     vjust = 1, 
+                                     hjust = 0.95, 
+                                     angle = 45), 
+          axis.text.y = element_text(size = 10,  color = "black",face = "plain", vjust = 0.5, 
+                                     hjust = 0.5, angle = 0))+
+    stat_compare_means(comparisons=list(c("24w","36w")), label="p.signf",method = 'wilcox.test', tip.length = 0,#p.format 
+                       symnum.args=list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1),
+                                        symbols = c("****", "***", "**", "*", "ns"))) 
+}
+wrap_plots(p_list, ncol = 1)
+
+
+##Fig.8M-N####
+DimPlot(obj_merged, reduction = "umap",group.by = "Tex_subtype",label = T, pt.size = 1,raster=FALSE,cols = c("#FFCCBC", "#E1EFFF", "#FFE0B2"),label.size = 5)
+table(obj_merged$time,obj_merged$Tex_subtype)
+df_prop <- obj_merged@meta.data %>%
+  group_by(time, Tex_subtype) %>%
+  dplyr::count(time, Tex_subtype) %>% 
+  group_by(time) %>%
+  mutate(Proportion = n ) %>% 
+  ungroup()
+
+df_mean <- df_prop %>%
+  group_by(time, Tex_subtype) %>%
+  summarise(mean_prop = mean(Proportion)) %>%
+  ungroup()
+
+df_mean$time <- factor(df_mean$time, levels = c("0w","4w","8w","16w","24w","36w"))
+df_mean$Tex_subtype <- factor(df_mean$Tex_subtype, levels = c("CD8Tex_prog","CD8Tex_eff-like","CD8Tex_term"))
+p1 <- ggplot(df_mean, aes(x = time, y = mean_prop, 
+                          stratum = Tex_subtype, alluvium = Tex_subtype, fill = Tex_subtype)) +
+  ggalluvial::geom_alluvium(alpha = 0.5, width = 1/5, knot.pos = 0.4) +
+  ggalluvial::geom_stratum(width = 2/3, color = "transparent") +
+  scale_fill_manual(values = c("#FFCCBC", "#E1EFFF", "#FFE0B2"))+
+  theme_minimal() +
+  labs(title = "Cell Proportion", y = "Mean Percentage (%)") +
+  theme(panel.grid = element_blank())+
+  theme_bw()+
+  # theme_classic(base_line_size = 0.5) +
+  theme(panel.grid = element_blank(),
+        axis.title.y = element_text(size = 10, color = "black",face = "bold", vjust = 1.9, hjust = 0.5, angle = 90),
+        axis.title.x = element_text(size = 10, color = "black",face = "bold", vjust = 1.9, hjust = 0.5, angle = 0),
+        axis.text.x = element_text(size = 8,color = "black",face = "plain"),
+        axis.text.y = element_text(size = 8,color = "black",face = "plain")
+  )+  cowplot::panel_border(size = 2)
