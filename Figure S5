@@ -1,0 +1,146 @@
+ZonationScore_calculator <- function(
+    exp,
+    features,
+    nbin = 24,
+    ctrl = 100,
+    name = 'Anno',
+    seed = 1
+){
+  if(!is.null(x=seed)){
+    set.seed(seed=seed)
+  }
+  features=lapply(X=features,intersect,rownames(x=exp))
+  cluster.length<-length(x=features)
+  data.avg<-Matrix::rowMeans(x=exp)
+  data.avg<-data.avg[order(data.avg)]
+  data.cut<-cut_number(x=data.avg+rnorm(n=length(data.avg))/1e30,
+                       n=nbin,labels=FALSE,right=FALSE)
+  names(x=data.cut)<-names(x=data.avg)
+  ctrl.use<-vector(mode="list",length=cluster.length)
+  for(i in 1:cluster.length){
+    features.use<-features[[i]]
+    for(j in 1:length(x=features.use)){
+      ctrl.use[[i]]<-c(
+        ctrl.use[[i]],
+        names(x=sample(
+          x=data.cut[which(x=data.cut==data.cut[features.use[j]])],
+          size=ctrl,
+          replace=FALSE
+        ))
+      )
+    }
+  }
+  ctrl.use<-lapply(X=ctrl.use,FUN=unique)
+  ctrl.scores<-matrix(
+    data=numeric(length=1L),
+    nrow=length(x=ctrl.use),
+    ncol=ncol(x=exp)
+  )
+  for(i in 1:length(ctrl.use)){
+    features.use<-ctrl.use[[i]]
+    ctrl.scores[i,]<-Matrix::colMeans(x=exp[features.use,])
+  }
+  features.scores<-matrix(
+    data=numeric(length=1L),
+    nrow=cluster.length,
+    ncol=ncol(x=exp)
+  )
+  for(i in 1:cluster.length){
+    features.use<-features[[i]]
+    data.use<-exp[features.use,]
+    features.scores[i,]<-Matrix::colMeans(x=data.use)
+  }	
+  features.scores.use<-features.scores-ctrl.scores
+  rownames(x=features.scores.use)<-names(features)
+  features.scores.use<-as.data.frame(x=t(x=features.scores.use))
+  rownames(x=features.scores.use)<-colnames(x=exp)
+  gc()
+  return(features.scores.use)
+}
+PV_gene_m <- c("Aldh1b1","App","Arsg","C9","Cdh1","Cryl1","Cyb561","Cyp2f2","Fgfr1",
+               "Foxq1","Ftcd","Gas2","Gls2","Hal","Hpx","Hsd11b1","Hsd17b13","Hsd17b6",
+               "Ly6e","Mfge8","Mug2","Pigr","Rbp1","Sds","Sdsl","Serpina12","Sfxn1",
+               "Sox9","Spp1","Tstd1","Uroc1","Wfdc2")
+
+CV_gene_m <- c("Abcc2","Akr1c6","Aldh1a1","Aldh3a2","Ang","Aqp9","Blvrb","Cldn2","Cpox",
+               "Csad","Cyp1a2","Cyp27a1","Cyp2c29","Cyp2c50","Cyp2c67","Cyp2c68","Cyp2d9",
+               "Cyp2e1","Cyp3a11","Cyp4a12a","Entpd5","Glul","Gstm2","Gstm3","Gstm6",
+               "Gulo","Lect2","Nr1i3","Oat","Pex11a","Pon1","Prodh","Rgn","Rnase4",
+               "Serpina6","Slc22a1","Slco1b2")
+
+
+DDC_zonationLandmark <- list(
+  "Pericentral" = CV_gene_m,
+  "Periport" = PV_gene_m
+)
+
+sample_list <- c("ND","FLD8","FLD24","FLD36")
+
+cur_sample <- sample_list[4]
+sp <- readRDS(glue("/data02/huzhiyang_03/FLD/RDS_file/ST/RDS_大类/{cur_sample}.rds"))
+# table(sp@meta.data$predict_CellType)
+# sp <- subset(sp, predict_CellType == "Hepatocyte")
+sp@meta.data$rank <- 0
+sp@meta.data$zonation_score <- 0
+
+# Calculating zonation scores
+expr <- Seurat::GetAssayData(sp)
+anno <- ZonationScore_calculator(expr, DDC_zonationLandmark)
+anno$zonation_score <- anno$Periport - anno$Pericentral
+sp@meta.data$zonation_score <- anno$zonation_score
+
+# Classify zonation layer by slice
+sp@meta.data$slice <- cur_sample
+meta.data <- sp@meta.data
+for (i in unique(meta.data$slice)) {
+  df <- meta.data[meta.data$slice == i,]
+  df$rank <- cut_number(df$zonation_score, n = 9, labels = c(1:9))
+  meta.data[rownames(df), "rank"] <- df$rank } 
+sp@meta.data$rank <- meta.data[ rownames(sp@meta.data), "rank"]
+
+
+
+
+DDC_zonationLandmark <- list(
+  "Pericentral" = c('Abcc2', 'Akr1c6', 'Aldh1a1', 'Aldh3a2', 'Ang', 'Aqp9', 'Blvrb', 'Cldn2', 'Cpox', 'Csad', 'Cyp1a2', 'Cyp27a1', 'Cyp2c29', 'Cyp2c50', 'Cyp2c67', 'Cyp2c68', 'Cyp2d9', 'Cyp2e1', 'Cyp3a11', 'Cyp4a12a', 'Entpd5', 'Glul', 'Gstm2', 'Gstm3', 'Gstm6', 'Gulo', 'Lect2', 'Nr1i3', 'Oat', 'Pex11a', 'Pon1', 'Prodh', 'Rgn', 'Rnase4', 'Serpina6', 'Slc22a1', 'Slco1b2'),
+  "Periport" = c('Aldh1b1', 'App', 'Arsg', 'C9', 'Cdh1', 'Cryl1', 'Cyb561', 'Cyp2f2', 'Fgfr1', 'Foxq1', 'Ftcd', 'Gas2', 'Gls2', 'Hal', 'Hpx', 'Hsd11b1', 'Hsd17b13', 'Hsd17b6', 'Ly6e', 'Mfge8', 'Mug2', 'Pigr', 'Rbp1', 'Sds', 'Sdsl', 'Serpina12', 'Sfxn1', 'Sox9', 'Spp1', 'Tstd1', 'Uroc1', 'Wfdc2')
+)
+hep <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/ST/RDS_大类/merged_rds.rds")
+
+gradient_colors <- c( "#FFFFFF",rep("#D6E4F0",3), "#FFFFFF", rep("#FFF5C0",9), "#FFFFFF", rep("#E2F0D9",6), "#FFFFFF")
+bg_gradient <- matrix(colorRampPalette(gradient_colors)(100), nrow = 1)
+
+p_list <- list()
+for (gene in DDC_zonationLandmark[[2]]) {
+  print(gene)
+  dat_p <- hep %>% 
+    FetchData( vars = c(gene, "zone_rank")) %>% setnames(c(1,2), c("gene","group"))
+  
+  dat_p$group <- as.factor(as.character(dat_p$group))
+  
+  mu <- dat_p %>%
+    group_by(group) %>%
+    summarise(grp.mean = mean(gene, na.rm = TRUE))
+  mu$genename <- gene
+  p_list[[gene]] <- ggplot(mu) +
+    annotation_raster(
+      raster = bg_gradient, 
+      xmin = 1, xmax = 9, 
+      ymin = -Inf, ymax = Inf,
+      interpolate = TRUE 
+    ) +
+    geom_point(aes_string(x = "group", y = "grp.mean", group = "genename"), size = 2) +
+    geom_line(aes_string(x = "group", y = "grp.mean", group = "genename"), size = 1) +
+    labs(title = gene, x = '', y = ' ') +
+    scale_color_manual(values = mycolor_new) + 
+    theme_classic(base_line_size = 1) + 
+    theme(
+      plot.title = element_text(size = 10, colour = "black", hjust = 0.5),
+      axis.title.y = element_text(size = 10, color = "black", face = "bold", vjust = 1.9, hjust = 0.5, angle = 90),
+      legend.title = element_text(color = "black", size = 15, face = "bold"),
+      legend.text = element_text(color = "black", size = 10, face = "bold"),
+      axis.text.x = element_text(size = 10, color = "black", face = "bold", vjust = 0, hjust = 1, angle = 0),
+      axis.text.y = element_text(size = 10, color = "black", face = "plain", vjust = 0.5, hjust = 0.5, angle = 0)
+    )
+  
+}
