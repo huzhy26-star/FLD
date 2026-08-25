@@ -1,0 +1,683 @@
+
+##Fig.7A####
+set.seed(123456)
+data <- GetAssayData(HSC, assay = 'RNA', slot = 'count')
+cell_metadata <- HSC@meta.data
+gene_annotation <- data.frame(gene_short_name = rownames(data))
+rownames(gene_annotation) <- rownames(data)
+cds <- new_cell_data_set(data,
+                         cell_metadata = cell_metadata,
+                         gene_metadata = gene_annotation)
+cds <- preprocess_cds(cds, num_dim = 15)
+
+cds <- reduce_dimension(cds)
+plot_cells(cds, label_groups_by_cluster=FALSE,  color_cells_by = "subtype_new")
+SingleCellExperiment::reducedDims(cds)[["UMAP"]]=HSC@reductions[["umap"]]@cell.embeddings
+cds <- cluster_cells(cds)
+plot_cells(cds,color_cells_by = "partition")
+cds <- learn_graph(cds)
+
+p1 <- plot_cells(cds,
+                 color_cells_by = "subtype_new",
+                 label_cell_groups=FALSE,
+                 label_leaves=TRUE,
+                 label_branch_points=TRUE,
+                 graph_label_size=1.5)
+p1
+save_plot(p1, prefix = glue("{result_path}/monocle3_celltype"), height = 8,width = 11,if_pdf = T)
+
+cds <- order_cells(cds)
+p2 <- plot_cells(cds,
+                 color_cells_by = "pseudotime",
+                 label_cell_groups=FALSE,
+                 label_leaves=FALSE,
+                 label_branch_points=FALSE,
+                 graph_label_size=2)
+p2
+save_plot(p2, prefix = glue("{result_path}/monocle3_order"), height = 6,width = 8,if_pdf = T)
+get_earliest_principal_node <- function(cds, time_bin=c('HSC-Serpina1e')){
+  # 首先找到指定celltype的 ID
+  cell_ids <- which(colData(cds)[, "subtype_new"] == time_bin)
+  closest_vertex <- cds@principal_graph_aux[["UMAP"]]$pr_graph_cell_proj_closest_vertex
+  closest_vertex <- as.matrix(closest_vertex[colnames(cds), ])
+  root_pr_nodes <- igraph::V(principal_graph(cds)[["UMAP"]])$name[as.numeric(names(which.max(table(closest_vertex[cell_ids,]))))] # igraph::V()函数获取主成分图中的所有顶点信息
+  root_pr_nodes
+}
+cds <- order_cells(cds, root_pr_nodes=get_earliest_principal_node(cds))
+p3 <- plot_cells(cds,
+                 color_cells_by = "pseudotime",
+                 label_cell_groups=FALSE,
+                 label_leaves=FALSE,
+                 label_branch_points=FALSE,
+                 graph_label_size=1.5)
+p3
+save_plot(p3, prefix = glue("{result_path}/monocle3_pseudotime"), height = 8,width = 10,if_pdf = T)
+
+##Fig.7C####
+col_list <- c("Col1a1","Col1a2","Col3a1","Col4a1","Col4a2","Col4a3","Col4a4","Col4a5","Col4a6")
+
+HSC@meta.data <- HSC@meta.data %>% mutate(
+  subtype = case_when(
+    subtype_new %in% c("HSC-Ccl2","HSC-Ebf1","HSC-Wt1") ~ "Activated HSC",
+    subtype_new %in% c("HSC-Postn","HSC-Clstn2","HSC-Ptprt") ~ "Transitional HSC",
+    subtype_new %in% c("HSC-Serpina1e") ~ "Quiescent HSC",
+  )
+)
+
+p_list <- list()
+for (genename in col_list) {
+  gene_data <- FetchData(HSC %>% subset(time %in% c("16w")), vars = c(genename, "subtype")) %>% data.table::setnames(c(1,2),c("exp","Group")) 
+  df_mean <- gene_data %>% 
+    group_by(Group) %>% summarise_all(mean) %>% as.data.frame()
+  gene_data$Group <- factor(gene_data$Group, levels = c("Quiescent HSC","Transitional HSC","Activated HSC"))
+  df_mean$Group <- factor(df_mean$Group, levels = c("Quiescent HSC","Transitional HSC","Activated HSC"))
+  
+  max_mean <- max(df_mean$exp)
+  y_positions <- seq(from = max_mean * 1.05, by = max_mean * 0.1, length.out = 5)
+  
+  p_list[[genename]] <-  ggplot(gene_data, aes(x =Group ,y = exp ,fill = Group))+
+    geom_bar(data = df_mean, aes(x = Group, y = exp, fill = Group),stat = "identity", width = 0.6, alpha = 0.6)+
+    scale_fill_manual(values=c(mycolor_new))+ 
+    scale_color_manual(values=c(mycolor_new))+
+    guides(fill=FALSE) +
+    labs(title = genename,
+         x = "",
+         y = "Expression Level") +
+    theme_classic(base_line_size = 0.5)+
+    theme(plot.title = element_text(size = 10,colour = "black",hjust = 0.5,face = "bold"),
+          legend.title = element_text(color="black", 
+                                      size=10, face="bold"),
+          legend.text = element_text(color="black",
+                                     size = 10, face = "bold"),
+          axis.text.x = element_text(size = 10, 
+                                     color = "black", 
+                                     face = "bold", 
+                                     vjust = 1, 
+                                     hjust = 0.95, 
+                                     angle = 30), 
+          axis.text.y = element_text(size = 10,  color = "black",face = "bold", vjust = 0.5, 
+                                     hjust = 0.5, angle = 0)) + 
+    stat_compare_means(comparisons =  list(c("Quiescent HSC","Transitional HSC"), 
+                                           c("Quiescent HSC","Activated HSC")),label.y = y_positions,step.increase = 0.02,
+                       method = 'wilcox.test',hide.ns = TRUE,label = "p.format",bracket.size = 0.1,size = 2,tip.length = 0.01)
+  
+}
+wrap_plots(p_list, ncol = 3)
+
+##Fig.7D####
+HSC@meta.data <- HSC@meta.data %>% mutate(
+  subtype = case_when(
+    subtype_new %in% c("HSC-Ccl2","HSC-Ebf1","HSC-Wt1") ~ "Activated HSC",
+    subtype_new %in% c("HSC-Postn","HSC-Clstn2","HSC-Ptprt") ~ "Transitional HSC",
+    subtype_new %in% c("HSC-Serpina1e") ~ "Quiescent HSC",
+  )
+)
+Idents(HSC) <- "subtype"
+DEG <- FindAllMarkers(HSC %>% subset(time == "16w"), only.pos = T, min.pct = 0.25, logfc.threshold = 0.25)
+
+stage = "16w"
+for (cell in unique(HSC$subtype)) {
+  genelist <- DEG %>% filter(cluster == cell) %>% 
+    filter(p_val < 0.05 & avg_log2FC > 0.25) %>% pull(gene)
+  gene_symbol <- bitr(genelist, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Mm.eg.db")
+  
+  GO_enrich=enrichGO(gene = gene_symbol$ENTREZID,
+                     OrgDb = org.Mm.eg.db,
+                     pvalueCutoff =1,
+                     qvalueCutoff = 1,
+                     ont="all",
+                     readable =T)	
+  GO_enrich=as.data.frame(GO_enrich)
+  
+  KEGG_enrich <- enrichKEGG(gene = gene_symbol$ENTREZID,keyType="kegg",
+                            pAdjustMethod="none",
+                            organism = "mouse",
+                            qvalueCutoff = 1, pvalueCutoff=1)
+  KEGG_enrich = as.data.frame(KEGG_enrich)
+  genelist <- strsplit(KEGG_enrich$geneID,"/")
+  KEGG_enrich$geneID <- lapply(genelist, changename) %>% unlist()
+  
+  p <- GO_KEGG_plot(go = GO_enrich, kegg =KEGG_enrich, go_ontology = c("BP"),show_n = 10, title = glue("{cell} {stage} stage"),
+                    color = brewer.pal(4, "Accent"))
+  
+  write.csv(GO_enrich, glue("{result_path}/GO_{cell}_{stage}.csv"))
+  write.csv(KEGG_enrich,glue("{result_path}/KEGG_{cell}_{stage}.csv"))
+  save_plot(p, prefix = glue("{result_path}/pathway_{cell}_{stage}"), if_pdf = T, height = 10,width = 10)
+  
+  ##
+  df_pathway <- GO_enrich %>% filter(ONTOLOGY %in% "BP") %>% 
+    mutate(logq = -log10(qvalue)) %>% arrange(desc(Count),desc(logq)) %>% 
+    head(n = 10) 
+  
+  df_pathway$GeneRatioDraw <- lapply(df_pathway$GeneRatio, function(x){
+    g <- strsplit(x, "/")[[1]] %>% as.numeric()
+    g <- g[1]/g[2]
+    g <- round(g, 3)
+    return(g)
+  }) %>% unlist()
+  
+  
+  p <- ggplot(df_pathway, aes(x = GeneRatioDraw,
+                              y = reorder(Description, GeneRatioDraw)
+  ))+
+    geom_point(aes(size= Count, color = logq))+
+    guides(size=guide_legend(override.aes=list(shape=21, colour="black", fill="white"))) +
+    scale_color_gradientn(colours = viridis::viridis(256)) +
+    labs(
+      size="Gene counts",color="-log10(p-value)",x="Gene Ratio"
+    )+
+    theme_bw()+
+    theme(
+      axis.text.y = element_text(size = rel(1.5), color = "black"),
+      # axis.text.x = element_blank(),
+      axis.title.x = element_text(size= rel(1.5)),
+      axis.title.y = element_blank(),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank()
+    )+
+    scale_size(range=c(5, 10))+
+    ggtitle(glue("{cell} {stage} stage"))
+  p
+  save_plot(p, glue("{result_path}/dotplot_GO_{cell}_{stage}"), width = 11, height = 6, if_pdf = T)
+}
+
+##Fig.7E####
+HSC@meta.data <- HSC@meta.data %>% mutate(
+  subtype = case_when(
+    subtype_new %in% c("HSC-Ccl2","HSC-Ebf1","HSC-Wt1") ~ "Activated HSC",
+    subtype_new %in% c("HSC-Postn","HSC-Clstn2","HSC-Ptprt") ~ "Transitional HSC",
+    subtype_new %in% c("HSC-Serpina1e") ~ "Quiescent HSC",
+  )
+)
+
+
+obj <- subset(HSC, time %in% c("0w","4w","8w","16w"))
+df_prop <- obj@meta.data %>%
+  mutate(celltype = subtype) %>% 
+  group_by(time, celltype) %>% 
+  count(time, celltype) %>% 
+  group_by(time) %>%
+  mutate(Proportion = n / sum(n) * 100) %>% 
+  ungroup()
+
+df_mean <- df_prop %>%
+  group_by(time, celltype) %>%
+  summarise(mean_prop = mean(Proportion)) %>%
+  ungroup()
+df_mean$time <- factor(df_mean$time, levels = c("0w","4w","8w","16w"))
+
+p2 <- ggplot(df_mean, aes(x = time, y = mean_prop, 
+                          stratum = celltype, alluvium = celltype, fill = celltype)) +
+  ggalluvial::geom_alluvium(alpha = 0.5, width = 1/5, knot.pos = 0.4) +
+  ggalluvial::geom_stratum(width = 2/3, color = "transparent") +
+  scale_fill_manual(values = FLD_col)+
+  theme_minimal() +
+  labs(title = "Cell Proportion", y = "Mean Percentage (%)") +
+  theme(panel.grid = element_blank())+
+  theme_bw()+
+  theme(panel.grid = element_blank(),
+        axis.title.y = element_text(size = 10, color = "black",face = "bold", vjust = 1.9, hjust = 0.5, angle = 90),
+        axis.title.x = element_text(size = 10, color = "black",face = "bold", vjust = 1.9, hjust = 0.5, angle = 0),
+        axis.text.x = element_text(size = 8,color = "black",face = "plain"),
+        axis.text.y = element_text(size = 8,color = "black",face = "plain")
+        
+  )+  cowplot::panel_border(size = 2)
+p2
+
+##Fig.7F-G####
+load("~/reference/nichenet_ref/nichenet_network_mouse.RData")
+
+#processing_data
+scRNA <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/allcell_0826.rds")
+sort(unique(scRNA@meta.data$celltype_new))
+
+seuratObj <- subset(scRNA, time == "16w")
+seuratObj$Minor_celltype <- seuratObj$celltype_new
+seuratObj@meta.data$Minor_celltype[seuratObj@meta.data$subtype_new %in% c("HSC-Ccl2", "HSC-Wt1", "HSC-Ebf1")] <- "aHSC"
+seuratObj@meta.data$Minor_celltype[seuratObj@meta.data$subtype_new %in% c("HSC-Clstn2", "HSC-Postn", "HSC-Ptprt")] <- "tHSC"
+seuratObj@meta.data$Minor_celltype[seuratObj@meta.data$subtype_new %in% c("HSC-Serpina1e")] <- "qHSC"
+
+table(seuratObj@meta.data$Minor_celltype)
+table(seuratObj@meta.data$time)
+
+
+##1. Define a set of potential ligands for both the sender-agnostic and sender-focused approach
+seuratObj <- SetIdent(seuratObj, value = "Minor_celltype") #将receiver和sender设为seurat对象的level
+receiver <- "aHSC"
+expressed_genes_receiver = get_expressed_genes(receiver, seuratObj, pct = 0.10)
+
+all_receptors <- unique(lr_network$to)  
+expressed_receptors <- intersect(all_receptors, expressed_genes_receiver)
+
+#sender-agnostic
+potential_ligands <- lr_network %>% filter(to %in% expressed_receptors) %>% pull(from) %>% unique()
+
+# #sender-focused
+# sender_celltypes <- c("program_1", "program_2", "program_3", "program_4", "program_5", "undefined")
+# list_expressed_genes_sender <- sender_celltypes %>% unique() %>% lapply(get_expressed_genes, seuratObj, 0.10)
+# expressed_genes_sender <- list_expressed_genes_sender %>% unlist() %>% unique()
+# potential_ligands_focused <- intersect(potential_ligands, expressed_genes_sender)
+
+# Also check
+# length(expressed_genes_sender) #配体细胞所有基因
+# length(potential_ligands) #根据受体细胞筛选出的数据库中所有潜在配体
+# length(potential_ligands_focused) #二者取交集，得到配体细胞表达的，在数据库中的，受体细胞的配体
+
+##2. Define the gene set of interest
+condition_oi <-  "aHSC"
+condition_reference <- "qHSC"
+
+seurat_obj_receiver <- subset(seuratObj, Minor_celltype %in% c(condition_oi, condition_reference))
+
+DE_table_receiver <-  FindMarkers(object = seurat_obj_receiver,
+                                  ident.1 = condition_oi, ident.2 = condition_reference,
+                                  group.by = "Minor_celltype",
+                                  min.pct = 0.05) %>% rownames_to_column("gene")
+
+set.seed(999)
+geneset_oi <- DE_table_receiver %>% filter(p_val_adj <= 0.05 & abs(avg_log2FC) >= 0.25) %>% 
+  arrange(desc(avg_log2FC)) %>%
+  head(n = 400) %>%
+  pull(gene)
+
+geneset_oi <- geneset_oi %>% .[. %in% rownames(ligand_target_matrix)]
+
+background_expressed_genes <- expressed_genes_receiver %>% .[. %in% rownames(ligand_target_matrix)]
+length(background_expressed_genes)
+length(geneset_oi)
+
+##4. Perform NicheNet ligand activity analysis (sender-agnostic approach)
+ligand_activities <- predict_ligand_activities(geneset = geneset_oi,
+                                               background_expressed_genes = background_expressed_genes,
+                                               ligand_target_matrix = ligand_target_matrix,
+                                               potential_ligands = potential_ligands)
+
+ligand_activities <- ligand_activities %>% arrange(-aupr_corrected) %>% mutate(rank = rank(desc(aupr_corrected)))
+ligand_activities
+
+#ligand activity histogram (the score for the 30th ligand is indicated via the dashed line)
+p_hist_lig_activity <- ggplot(ligand_activities, aes(x=aupr_corrected)) + 
+  geom_histogram(color="black", fill="darkorange")  + 
+  geom_vline(aes(xintercept=min(ligand_activities %>% top_n(30, aupr_corrected) %>% pull(aupr_corrected))),
+             color = "red", linetype = "dashed", linewidth = 1) + 
+  labs(x="ligand activity (PCC)", y = "# ligands") +
+  theme_classic()
+
+p_hist_lig_activity
+
+best_upstream_ligands <- ligand_activities %>% top_n(30, aupr_corrected) %>% arrange(-aupr_corrected) %>% pull(test_ligand)
+
+#visualize the ligand activity measure (AUPR) of these top-ranked ligands:
+vis_ligand_aupr <- ligand_activities %>% filter(test_ligand %in% best_upstream_ligands) %>%
+  column_to_rownames("test_ligand") %>% select(aupr_corrected) %>% arrange(aupr_corrected) %>% as.matrix(ncol = 1)
+
+(make_heatmap_ggplot(vis_ligand_aupr,
+                     "Prioritized ligands", "Ligand activity", 
+                     legend_title = "AUPR", color = "darkorange") + 
+    theme(axis.text.x.top = element_blank()))
+
+#####a. Active target gene inference
+#选择每个ligand的top_n的靶基因
+active_ligand_target_links_df <- best_upstream_ligands %>%
+  lapply(get_weighted_ligand_target_links,
+         geneset = geneset_oi,
+         ligand_target_matrix = ligand_target_matrix,
+         n = 100) %>%
+  bind_rows() %>% drop_na()
+
+nrow(active_ligand_target_links_df)
+head(active_ligand_target_links_df)
+
+
+#可视化
+active_ligand_target_links <- prepare_ligand_target_visualization(
+  ligand_target_df = active_ligand_target_links_df,
+  ligand_target_matrix = ligand_target_matrix,
+  cutoff = 0.25)  #行为ligand，列为target_gene
+
+nrow(active_ligand_target_links)
+head(active_ligand_target_links)
+
+order_ligands <- intersect(best_upstream_ligands, colnames(active_ligand_target_links)) %>% rev()
+order_targets <- active_ligand_target_links_df$target %>% unique() %>% intersect(rownames(active_ligand_target_links))
+
+vis_ligand_target <- t(active_ligand_target_links[order_targets,order_ligands])
+
+make_heatmap_ggplot(vis_ligand_target, "Prioritized ligands", "Predicted target genes",
+                    color = "purple", legend_title = "Regulatory potential") +
+  scale_fill_gradient2(low = "whitesmoke",  high = "purple")
+
+#####b. Receptors of top-ranked ligands
+ligand_receptor_links_df <- get_weighted_ligand_receptor_links(
+  best_upstream_ligands, expressed_receptors,
+  lr_network, weighted_networks$lr_sig) 
+vis_ligand_receptor_network <- prepare_ligand_receptor_visualization(
+  ligand_receptor_links_df,
+  best_upstream_ligands,
+  order_hclust = "none") 
+
+(make_heatmap_ggplot(t(vis_ligand_receptor_network), 
+                     y_name = "Ligands", x_name = "Receptors",  
+                     color = "mediumvioletred", legend_title = "Prior interaction potential"))
+
+
+
+
+ligand_activities_all <- ligand_activities 
+best_upstream_ligands_all <- best_upstream_ligands
+
+# ligand_activities <- ligand_activities
+# best_upstream_ligands <- ligand_activities %>% top_n(30, aupr_corrected) %>% arrange(-aupr_corrected) %>%
+#   pull(test_ligand) %>% unique()
+# 
+# ligand_aupr_matrix <- ligand_activities %>% filter(test_ligand %in% best_upstream_ligands) %>%
+#   column_to_rownames("test_ligand") %>% select(aupr_corrected) %>% arrange(aupr_corrected)
+# vis_ligand_aupr <- as.matrix(ligand_aupr_matrix, ncol = 1) 
+
+p_ligand_aupr <- make_heatmap_ggplot(vis_ligand_aupr,
+                                     "Prioritized ligands", "Ligand activity", 
+                                     legend_title = "AUPR", color = "darkorange") + 
+  theme(axis.text.x.top = element_blank())
+# ggsave("~/fatty_liver_hzy/16w/HSC_nichenet_ligand_aupr.pdf",p_ligand_aupr , height = 6, width = 2)
+
+p_ligand_aupr
+
+###a. Target gene plot
+# active_ligand_target_links_df <- best_upstream_ligands %>%
+#   lapply(get_weighted_ligand_target_links,
+#          geneset = geneset_oi,
+#          ligand_target_matrix = ligand_target_matrix,
+#          n = 100) %>%
+#   bind_rows() %>% drop_na()
+# 
+# active_ligand_target_links <- prepare_ligand_target_visualization(
+#   ligand_target_df = active_ligand_target_links_df,
+#   ligand_target_matrix = ligand_target_matrix,
+#   cutoff = 0.33) 
+# 
+# order_ligands <- intersect(best_upstream_ligands, colnames(active_ligand_target_links)) %>% rev()
+# order_targets <- active_ligand_target_links_df$target %>% unique() %>% intersect(rownames(active_ligand_target_links))
+# 
+# vis_ligand_target <- t(active_ligand_target_links[order_targets,order_ligands])
+
+p_ligand_target <- make_heatmap_ggplot(vis_ligand_target, "Prioritized ligands", "Predicted target genes",
+                                       color = "purple", legend_title = "Regulatory potential") +
+  scale_fill_gradient2(low = "whitesmoke",  high = "purple")
+
+p_ligand_target
+ggsave("~/fatty_liver_hzy/16w/HSC_nichenet_ligand_target.pdf",p_ligand_target , height = 6, width = 12)
+###b. Receptor plot
+# ligand_receptor_links_df <- get_weighted_ligand_receptor_links(
+#   best_upstream_ligands, expressed_receptors,
+#   lr_network, weighted_networks$lr_sig) 
+# 
+# vis_ligand_receptor_network <- prepare_ligand_receptor_visualization(
+#   ligand_receptor_links_df,
+#   best_upstream_ligands,
+#   order_hclust = "both") 
+
+p_ligand_receptor <- make_heatmap_ggplot(t(vis_ligand_receptor_network), 
+                                         y_name = "Ligands", x_name = "Receptors",  
+                                         color = "mediumvioletred", legend_title = "Prior interaction potential")
+
+p_ligand_receptor
+ggsave("~/fatty_liver_hzy/16w/HSC_nichenet_ligand_receptor.pdf",p_ligand_receptor , height = 6, width = 12)
+
+best_upstream_ligands_all %in% rownames(seuratObj) %>% table()
+
+###c. Visualizing expression and log-fold change in sender cells
+##配体表达在不同sender间的表达dotplot
+p_dotplot <- DotPlot(seuratObj,
+                     features = rev(best_upstream_ligands), cols = "RdYlBu") + 
+  coord_flip() +
+  scale_y_discrete(position = "right")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 0, vjust = 0))
+
+p_dotplot
+ggsave("~/fatty_liver_hzy/16w/HSC_nichenet_ligand_dotplot.pdf",p_dotplot , height = 6, width = 8)
+
+
+##7. Summary visualizations of the NicheNet analysis
+figures_without_legend <- cowplot::plot_grid(
+  p_ligand_aupr + theme(legend.position = "none"),
+  p_dotplot + theme(legend.position = "none",
+                    axis.ticks = element_blank(),
+                    axis.title.y = element_blank(),
+                    axis.title.x = element_text(size = 12),
+                    axis.text.y = element_text(size = 9),
+                    axis.text.x = element_text(size = 9,  angle = 90, hjust = 0)) +
+    ylab("Expression in Sender"),
+  p_ligand_target + theme(legend.position = "none",
+                          axis.title.y = element_blank()),
+  align = "hv",
+  nrow = 1,
+  rel_widths = c(ncol(vis_ligand_aupr)+6, length(unique(p_dotplot@data$id))+1, nrow(vis_ligand_aupr)))
+
+legends <- cowplot::plot_grid(
+  ggpubr::as_ggplot(ggpubr::get_legend(p_ligand_aupr)),
+  ggpubr::as_ggplot(ggpubr::get_legend(p_dotplot)),
+  # ggpubr::as_ggplot(ggpubr::get_legend(p_lfc)),
+  ggpubr::as_ggplot(ggpubr::get_legend(p_ligand_target)),
+  nrow = 1,
+  align = "h", rel_widths = c(ncol(vis_ligand_aupr)+10, length(unique(p_dotplot@data$id)), nrow(vis_ligand_aupr)))
+
+dev.off()
+combined_plot <-  cowplot::plot_grid(figures_without_legend, legends, rel_heights = c(10,4), nrow = 2, align = "hv")
+combined_plot
+pdf("~/fatty_liver_hzy/16w/HSC_nichenet.pdf", height = 12, width = 20)
+combined_plot
+dev.off()
+
+data_sub <- subset(seuratObj, Minor_celltype %in% c("aHSC", "qHSC", "tHSC"), invert = T)
+p <- DotPlot(data_sub, features = "Tgfb1", group.by = "Minor_celltype", cols='Spectral')+
+  # coord_flip() +
+  geom_point(aes(size=pct.exp), shape = 21, colour="black", stroke=0.5) +
+  guides(size=guide_legend(override.aes=list(shape=21, colour="black", fill="white"))) +
+  scale_size(breaks = c(0, 25, 50, 75)) +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=10), axis.text.y = element_text(size=10))
+p_data <- p@data
+data_order <- p_data %>%
+  arrange(avg.exp.scaled) %>%
+  pull(id)
+p_data$id <- factor(p_data$id, levels = data_order)
+ggplot(p_data, aes(x = features.plot, y = id, color = avg.exp.scaled, size = pct.exp)) +
+  geom_point() + 
+  # geom_text(aes(label = a), vjust = -1,)+
+  # theme_minimal()+
+  labs(title = "Tgfb1",
+       x = "", y = "") +
+  # facet_wrap(celltype~ ., nrow = 1)+
+  scale_color_gradient2(low="#005fbf",mid="white",high="#bf0000",midpoint = 0) +
+  # scale_color_gradientn(colours = viridis::viridis(256)) +  # 根据表达量变化调色
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1,color = "black"),
+        axis.text.y = element_text(color = "black"),
+        panel.grid.minor = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_blank())
+
+##Fig.7H####
+my_dist2list <- function(dist.obj) {
+  dist_mat <- as.matrix(dist.obj)
+  diag(dist_mat) <- NA # 将对角线设为NA，之后方便过滤掉
+  return(as.data.frame(as.table(dist_mat), responseName = "value", na.rm = TRUE))
+}
+remaining_types <- c("Myeloid")
+specified_types <- c("HSC")  ###中心细胞
+
+obj_merged <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/ST/RDS_大类/merged_rds.rds")
+meta_all <- obj_merged@meta.data
+sample_list <- unique(meta_all$sample)
+sample_dis <- list()
+results_list <- list()
+for (samplename in sample_list) {
+  print(samplename)
+  cur_meta_inuse <- subset(meta_all, sample == samplename)
+  
+  all_cell_coords <- cur_meta_inuse[, c("row", "col")]
+  all_cell_types <- cur_meta_inuse$celltype
+  
+  for (spec_type in specified_types) {
+    print(spec_type)
+    
+    specified_cells <- which(all_cell_types == spec_type)
+    specified_names <- rownames(cur_meta_inuse)[specified_cells]
+    specified_coords <- all_cell_coords[specified_cells, ]
+    
+    type_results <- vector("list", length(remaining_types))
+    
+    for (j in seq_along(remaining_types)) {
+      remain_type <- remaining_types[j]
+      remaining_cells <- which(all_cell_types == remain_type)
+      
+      if (length(specified_cells) > 0 && length(remaining_cells) > 0) {
+        remaining_coords <- all_cell_coords[remaining_cells, ]
+        avg_dists_top5 <- sapply(1:nrow(specified_coords), function(i) {
+          dists <- sqrt((specified_coords[i, 1] - remaining_coords[, 1])^2 + 
+                          (specified_coords[i, 2] - remaining_coords[, 2])^2)
+          k <- min(3, length(dists))
+          mean(sort(dists)[1:k])
+        })
+        
+        type_results[[j]] <- data.frame(
+          cell = specified_names,
+          avg_distance_top3 = avg_dists_top5,
+          source_type = spec_type,
+          target_type = remain_type,
+          samplename = samplename
+        )
+      }
+    }
+    
+    results_list[[spec_type]] <- do.call(rbind, type_results)
+  }
+  final_result_df <- do.call(rbind, results_list)
+  sample_dis[[samplename]] <- final_result_df
+}
+
+df_sample_dis <- bind_rows(sample_dis)
+write.csv(df_sample_dis, "/data02/huzhiyang_03/FLD/result/28.ST/HSC_dis/Allsample_from_HSC_to_Myeloid_cell.csv")
+
+
+df_sample_dis <- read.csv("/data02/huzhiyang_03/FLD/result/28.ST/HSC_dis/Allsample_from_HSC_to_T_Myeloid_cell.csv",header = T,row.names = 1)
+df_sample_dis <- filter(df_sample_dis, samplename %in% c("ND","FLD8","FLD24") & target_type %in% c("Myeloid"))
+cur_summary <- df_sample_dis %>% group_by(samplename,target_type) %>% 
+  dplyr::summarise(mean_score = mean(avg_distance_top3))
+
+df_sample_dis %>% group_by(samplename) %>% 
+  summarise( mean_dis = mean(avg_distance_top3))
+df_mean <- df_sample_dis %>% group_by(samplename) %>% 
+  summarise( mean_dis = mean(avg_distance_top3)) %>% as.data.frame()
+df_sample_dis$samplename <- factor(df_sample_dis$samplename, levels = c("ND","FLD8","FLD24"))
+df_mean$samplename <- factor(df_mean$samplename, levels = c("ND","FLD8","FLD24"))
+
+p1 <- ggplot(df_sample_dis, aes(x = avg_distance_top3, fill = samplename)) +
+  geom_density(adjust = 5,aes(color = samplename),alpha = 0.5,size = 0)+
+  geom_vline(data = df_mean ,aes(xintercept = mean_dis,color = samplename), linetype = "dashed",color = c("#FFCCBC", "#E1EFFF", "#FFE0B2"))+
+  scale_fill_manual(values = c("#FFCCBC", "#E1EFFF", "#FFE0B2")) + 
+  scale_color_manual(values = c("#FFCCBC", "#E1EFFF", "#FFE0B2")) + 
+  # theme_minimal() 
+  labs(title = 'min distance from HSC to Myeloid',x = '',y = 'Density' ) +
+  theme(
+    plot.title    = element_text(color = 'black', size   = 15, hjust = 0.5),
+    plot.subtitle = element_text(color = 'black', size   = 16,hjust = 0.5),
+    plot.caption  = element_text(color = 'black', size   = 16,face = 'italic', hjust = 1),
+    axis.text.x   = element_text(color = 'black', size = 10, angle = 40,hjust = 1),
+    axis.text.y   = element_text(color = 'black', size = 10, angle = 0),
+    axis.title.x  = element_text(color = 'black', size = 13, angle = 0),
+    axis.title.y  = element_text(color = 'black', size = 13, angle = 90),
+    legend.title  = element_text(color = 'black', size  = 8),
+    legend.text   = element_text(color = 'black', size   = 8),
+    axis.line.y = element_line(color = 'black', linetype = 'solid'),
+    axis.line.x = element_line (color = 'black',linetype = 'solid'), 
+    panel.background=element_rect(fill="white"),
+    strip.background = element_blank(),
+    strip.text.x=element_text(angle = 45, size = 10)
+  ) 
+p1
+
+
+##Fig.7I####
+dat_anno <- read.table(glue("/data02/huzhiyang_03/FLD/result/28.ST/HSC亚类注释/HSC.txt"),header = T) 
+obj_ST <- readRDS(glue("/data02/huzhiyang_03/FLD/RDS_file/ST/RDS_大类/FLD24.rds"))
+
+obj_ST@meta.data <- obj_ST@meta.data %>% left_join(dat_anno, by = "BinID")
+rownames(obj_ST@meta.data) <- obj_ST@meta.data$bin
+
+df_location <- obj_ST@meta.data %>%
+  filter(subtype %in% c("Activated_HSC","Quiescent_HSC","Transitional_HSC")) %>% 
+  dplyr::mutate(dplyr::across(c(col, row), as.numeric)) %>%
+  dplyr::distinct(row, col,subtype)
+
+
+df_expand <- df_location %>% 
+  st_expand_n(
+    n = 10, 
+    x = "col", 
+    y = "row", 
+    expand_n = "expand_n", 
+    mode = 2,group.by = "subtype"
+  )
+df_expand <- df_expand %>%
+  dplyr::select(col, row, HSC_type = group.by, distance = expand_n)
+table(df_expand$HSC_type,df_expand$distance)
+
+obj_ST@meta.data <- obj_ST@meta.data %>%
+  dplyr::mutate(dplyr::across(c(col, row), as.numeric)) %>%
+  dplyr::select(-dplyr::any_of(c("HSC_type", "distance"))) %>%
+  dplyr::left_join(df_expand, by = c("row", "col"))
+rownames(obj_ST@meta.data) <- obj_ST@meta.data$bin
+write.csv(obj_ST@meta.data,"/data02/huzhiyang_03/FLD/result/28.ST/HSC亚类注释/FLD24w_HSCexpand10.csv")
+
+gl_syn <- read.gmt(glue("/data02/huzhiyang_03/FLD/result/10.巨噬细胞/炎症/Inflammation_mmu.gmt"))
+gl_syn <- gl_syn %>% filter(nchar(gene) > 0)    ####按照最大列制作一个数据框，可能存在空值，需要去除gene为空值的行
+gl_1 <- unique(gl_syn$term) %>%
+  map(~ gl_syn %>% filter(term == .x) %>% pull(gene) %>% unique()) %>%
+  setNames(unique(gl_syn$term))
+
+obj <- AddModuleScore(obj_ST, gl_1, name = "Cluster")
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+
+p_list <- list()
+for (cur_n in c(1)) {
+  print(cur_n)
+  metadata <- filter(obj@meta.data, distance %in% c(0:cur_n)) %>% 
+    filter(HSC_type %in% c("Quiescent_HSC","Activated_HSC")) %>% 
+    dplyr::select(c(group = HSC_type, score = Inflammation))
+  
+  metadata$group <- factor(metadata$group,levels = c("Quiescent_HSC","Transitional_HSC","Activated_HSC"))
+  p_list[[glue("layer_{cur_n}")]] <- ggplot(metadata, aes_string(x = "group",y = "score" ,fill = "group"))+
+    # geom_boxplot(outliers = FALSE)+
+    geom_violin(width = 0.8)+
+    geom_boxplot(width=0.1, fill="white",outlier.shape = NA)+
+    scale_fill_manual(values=c("#FFCCBC", "#E1EFFF","#FFE0B2","#E1BEE7"))+ #颜色
+    guides(fill=FALSE) +
+    stat_summary(fun.data = mean_fun, geom = "text", size=3 , color="black") +
+    labs(title = "Inflammation score around HSC",
+         x = '',
+         y = "Score") +
+    theme_classic(base_line_size = 0.5)+# 主题设置，这个是无线条主题 # 坐标轴的粗细
+    cowplot::panel_border(size = 0.5,color = "black") +
+    theme(plot.title = element_text(size = 10,colour = "black",hjust = 0.5),
+          axis.title.y = element_text(size = 12, color = "black",face = "plain", vjust = 1.9, hjust = 0.5, angle = 90),
+          legend.title = element_text(color="black", # 修改图例的标题
+                                      size=10, face="plain"),
+          legend.text = element_text(color="black", # 设置图例标签文字
+                                     size = 10, face = "plain"),
+          axis.text.x = element_text(size = 10,  # 修改X轴上字体大小，
+                                     color = "black", # 颜色
+                                     face = "plain", #  face取值：plain普通，bold加粗，italic斜体，bold.italic斜体加粗
+                                     vjust = 1, # 位置
+                                     hjust = 0.95, 
+                                     angle = 30), #角度
+          axis.text.y = element_text(size = 10,  color = "black",face = "plain", vjust = 0.5, 
+                                     hjust = 0.5, angle = 0)) +
+    stat_compare_means(comparisons= list(c("Quiescent_HSC","Activated_HSC")), 
+                       label="p.signf",method = 'wilcox.test', tip.length = 0,#p.format 
+                       symnum.args=list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1),
+                                        symbols = c("****", "***", "**", "*", "ns")))
+  
+}
+wrap_plots(p_list,ncol = 1)
+save_plot(wrap_plots(p_list,ncol = 1), "/data02/huzhiyang_03/FLD/result/28.ST/HSC亚类注释/barplot_HSC_infla_expand1",height = 4,width = 3,if_pdf = T)
