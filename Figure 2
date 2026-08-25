@@ -1,0 +1,337 @@
+##Fig.2A####
+bulk_df1 <- read.csv("/data02/huzhiyang_03/FLD/result/17.bulk/liver_bulk.csv",header = T,row.names = 1,check.names = F)
+df_group <- read.csv("/data02/huzhiyang_03/FLD/result/17.bulk/liver_bulk_group.csv",header = T,row.names = 1)
+df_group_04w <- filter(df_group, group%in% c("0w","4w"))
+df_bulk_04w <- bulk_df1 %>% dplyr::select(df_group_04w$samplename)
+
+group_list <- factor(df_group_04w[,2],ordered = F)
+design <- model.matrix(~0+group_list)
+colnames(design) <- levels(group_list)
+rownames(design) <- colnames(df_bulk_04w)
+design
+#线性模型拟合
+fit <- lmFit(df_bulk_04w,design)
+#构建比较矩阵
+cont.matrix <- makeContrasts(contrasts = "G4w-G0w",levels = design)
+cont.matrix
+
+fit2 <- contrasts.fit(fit,cont.matrix) # 构建数据线性模型,计算估计的相关系数和标准差
+fit2 <- eBayes(fit2) # 贝叶斯检验
+tmpOut <- topTable(fit2,coef = 1,n = Inf,adjust.method = "BH",sort.by = "logFC") # 结果
+dif <- tmpOut[tmpOut$P.Value <= 0.05 & abs(tmpOut$logFC) > 0,]
+dim(dif)
+write.csv(tmpOut,file = "/data02/huzhiyang_03/FLD/result/17.bulk/0w_4w/limma_allgene_04w.csv")
+write.csv(dif,file = "/data02/huzhiyang_03/FLD/result/17.bulk/0w_4w/limma_DEG_04w.csv")
+
+DEG <- read.csv("/data02/huzhiyang_03/FLD/result/17.bulk/0w_4w/limma_DEG_04w.csv",header = T,row.names = 1)
+genelist <- filter(DEG, logFC >0.25 & P.Value < 0.05) %>% rownames()
+
+
+result_path <- "/data02/huzhiyang_03/FLD/result/17.bulk/0w_4w"
+gene_symbol <- bitr(genelist, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Mm.eg.db")
+GO_enrich=enrichGO(gene = gene_symbol$ENTREZID,
+                   OrgDb = org.Mm.eg.db, 
+                   pvalueCutoff =1,	
+                   qvalueCutoff = 1,	
+                   ont="all",
+                   readable =T)	
+GO_enrich=as.data.frame(GO_enrich)
+
+write.csv(GO_enrich, glue("{result_path}/GO_04w.csv"))
+
+df_pathway <- GO_enrich %>% filter(ONTOLOGY %in% "BP") %>% 
+  mutate(logq = -log10(qvalue)) %>% arrange(desc(Count),desc(logq)) %>% 
+  head(n = 10) 
+
+df_pathway$GeneRatioDraw <- lapply(df_pathway$GeneRatio, function(x){
+  g <- strsplit(x, "/")[[1]] %>% as.numeric()
+  g <- g[1]/g[2]
+  g <- round(g, 3)
+  return(g)
+}) %>% unlist()
+
+
+p <- ggplot(df_pathway, aes(x = GeneRatioDraw,
+                            y = reorder(Description, GeneRatioDraw)
+))+
+  geom_point(aes(size= Count, color = logq))+
+  guides(size=guide_legend(override.aes=list(shape=21, colour="black", fill="white"))) +
+  scale_color_gradientn(colours = viridis::viridis(256)) +
+  labs(
+    size="Gene counts",color="-log10(p-value)",x="Gene Ratio"
+  )+
+  theme_bw()+
+  theme(
+    axis.text.y = element_text(size = rel(1.5), color = "black"),
+    axis.title.x = element_text(size= rel(1.5)),
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )+
+  scale_size(range=c(5, 10))+
+  ggtitle(glue("0w vs 4w"))
+save_plot(p, glue("{result_path}/dotplot_GO_04w"), width = 8, height = 6, if_pdf = T)
+
+
+##Fig.2B####
+##脂质代谢基因
+genelist <- c()
+for (cur_set in c("FA_biosynthesis","FA_catabiosis","FA_transport")) {
+  gl_syn <- read.gmt(glue("/data02/huzhiyang_03/FLD/result/geneset/{cur_set}.gmt"))
+  gl_syn <- gl_syn %>% filter(nchar(gene) > 0)  
+  
+  genelist <- c(genelist,unique(gl_syn$gene))
+}
+genelist <- unique(genelist)
+allcell <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/allcell_0826.rds")
+df_num<- matrix(nrow =length(unique(allcell$celltype_new)) ,ncol =2,
+                dimnames = list(unique(allcell$celltype_new),c("celltype","DEG_num")))
+
+for (cur_cell in unique(allcell$celltype_new)) {
+  print(cur_cell)
+  obj <- subset(allcell, time %in% c("0w","4w") & celltype_new == cur_cell)
+  
+  obj_merged.diff.wilcox = presto::wilcoxauc(obj,group_by = 'time')
+  diff.wilcox1 <- obj_merged.diff.wilcox %>% 
+    filter(logFC > 0 & padj < 0.05) %>% 
+    filter(feature %in% genelist & group == "4w")
+  print(nrow(diff.wilcox1))
+  
+  df_num[cur_cell,"celltype"] <- cur_cell
+  df_num[cur_cell,"DEG_num"] <- nrow(diff.wilcox1)
+}
+write.csv(as.data.frame(df_num),"/data02/huzhiyang_03/FLD/result/09.核测序/DEG_met/DEG_lipid_0w_4w.csv")
+
+df_num <- read.csv("/data02/huzhiyang_03/FLD/result/09.核测序/DEG_met/DEG_lipid_0w_4w.csv",row.names = 1)
+sort_cell <- df_num %>% arrange(desc(DEG_num)) %>% pull(celltype)
+df_num$celltype <- factor(df_num$celltype, levels = sort_cell)
+
+cols2 <- c("#FFCCBC", "#E1EFFF", "#E1BEE7", "#81D4FA","#FFC98B",  "#A5D6A7","#B2DFDB")
+names(cols2) <- c("B cell","Cholangiocyte","Endothelial","HSC","Hepatocyte","Myeloid"," _cell")
+
+
+p5 <- ggplot(df_num,aes(x = celltype, y = DEG_num, fill = celltype))+
+  geom_col(aes(fill=celltype))+
+  scale_fill_manual(values=cols2)+
+  labs(title = 'Lipid Metabolic Differential Genes',
+       x = '',
+       y = 'Number' ) +
+  theme_bw()+
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        axis.title = element_text(size=10),title = element_text(size=10),
+        axis.title.y = element_text(size = 8, color = "black",face = "bold", vjust = 1.9, hjust = 0.5, angle = 90),
+        axis.title.x = element_text(size = 8, color = "black",face = "bold", vjust = 1.9, hjust = 0.5, angle = 0),
+        axis.text.y = element_text(size = 8,color = "black",face = "plain",angle = 0),
+        axis.text.x = element_text(size = 8,color = "black",face = "plain",angle = 45, hjust = 1)
+  )
+
+##Fig.2C####
+hep <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Hepatocyte_16.rds")
+hep_filter <- subset(hep, time %in% c("0w","4w"))
+obj <- AddModuleScore(hep_filter, features=gl_1, name = "") 
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+
+df <- obj@meta.data %>% dplyr::select(c(time,names(gl_1))) %>% 
+  reshape2::melt(id = "time")
+colnames(df) <- c("time","pathway","score")
+my_comparisons <- list( c("0w", "4w"))
+p1 <- ggplot(df, aes(x = time, y = score, fill = time)) +
+  geom_violin(width = 0.8)+
+  geom_boxplot(width=0.1, fill="white",outlier.shape = NA)+
+  facet_wrap(~pathway, scales = "free_y",ncol = 4) +
+  stat_compare_means(comparisons=my_comparisons, label="p.signf",method = 'wilcox.test', #p.format 
+                     symnum.args=list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1),
+                                      symbols = c("****", "***", "**", "*", "ns"))) +
+  theme_classic()+
+  cowplot::panel_border(size = 0.5,color = "black")+
+  scale_fill_manual(values = FLD_col) +
+  labs(title = "Catabolic process",
+       x = "",
+       y = "Score") +
+  theme(panel.grid.minor = element_blank(),legend.position = "none")
+
+##Fig.2D####
+obj <- Hepatocyte %>% 
+  subset(time %in% c("0w","4w"))
+
+Idents(obj) <- "time"
+DEGall <- FindMarkers(obj, ident.1 = "4w",ident.2 = "0w",logfc.threshold = 0,min.pct = 0)
+DEGall <- presto::wilcoxauc(obj,group_by = 'time')
+
+ref_list <- c("m5.go.v2025.1.Mm.symbols","mh.all.v2025.1.Mm.symbols","m2.cp.reactome.v2025.1.Mm.symbols","KEGG_mmu_pathway")
+result_path = "/data02/huzhiyang_03/FLD/result/13.代谢改变/肝分区时序变化/4w_0w"
+genelist <- DEGall %>% pull(avg_log2FC)
+names(genelist) <- rownames(DEGall)
+genelist <- sort(genelist,decreasing = T)
+any(!is.finite(genelist))
+genelist <- genelist[is.finite(genelist)]
+
+result_list <- list()
+for (ref_gmt in ref_list) {
+  all_msigdb <- clusterProfiler::read.gmt(glue("/data02/huzhiyang_03/FLD/result/13.代谢改变/GSEA_set/{ref_gmt}.gmt"))
+  gsegmt <- GSEA(genelist, TERM2GENE=all_msigdb, verbose=FALSE,pvalueCutoff = 1,scoreType="pos",
+                 pAdjustMethod="none")
+  
+  result_list[[ref_gmt]] <- gsegmt@result
+}
+merge_result <- bind_rows(result_list)
+writexl::write_xlsx(merge_result,glue("/data02/huzhiyang_03/FLD/result/13.代谢改变/肝分区时序变化/4w_0w/GSEA_Allregion_4w.xlsx"))
+
+df_pathway <- readxl::read_xlsx(glue("/data02/huzhiyang_03/FLD/result/09.核测序/GSEA/GSEA_Allregion_4w_0w_filter.xlsx"))
+df_pathway$NES %<>% as.numeric(df_pathway$NES)
+
+df_pathway$NES <- ifelse(df_pathway$Group == "0w",  -df_pathway$NES,df_pathway$NES)
+df_pathway <- arrange(df_pathway, desc(NES))
+
+p <- ggplot(data=df_pathway,aes(x = NES,y = Description,fill=Group))  + 
+  geom_bar(stat="identity",width=0.8 ) + 
+  ylim(rev(df_pathway$Description)) +
+  theme_test() +
+  scale_fill_manual(values=c(FLD_col)) +
+  labs(x="NES",y="",title="GSEA") + 
+  theme(axis.text=element_text(size=12,color="black"),  
+        axis.title = element_text(size=16),title = element_text(size=13))
+
+
+##Fig.2E####
+library(limma)
+lipidome_df <- read.csv("/data02/huzhiyang_03/FLD/result/12.脂质组/lipidome_matrix.csv",header = T,row.names = 1)
+df_Group <- read.csv("/data02/huzhiyang_03/FLD/result/12.脂质组/group.csv",row.names = 1)
+df_Group <- filter(df_Group, group %in% c("4w","0w")) %>% 
+  mutate(group = case_when(
+    group %in% "4w" ~ "FLD_4w",
+    group %in% "0w" ~ "FLD_0w"
+  ))
+
+exp <- lipidome_df[,rownames(df_Group)]
+exp <- log2(exp + 1)
+#设置分组信息
+group_list <- factor(df_Group[,1],ordered = F)
+design <- model.matrix(~0+group_list)
+colnames(design) <- levels(group_list)
+rownames(design) <- colnames(exp)
+design
+#线性模型拟合
+fit <- lmFit(exp,design)
+#构建比较矩阵
+cont.matrix <- makeContrasts(contrasts = "FLD_4w-FLD_0w",levels = design)
+cont.matrix
+
+fit2 <- contrasts.fit(fit,cont.matrix) # 构建数据线性模型,计算估计的相关系数和标准差
+fit2 <- eBayes(fit2) # 贝叶斯检验
+tmpOut <- topTable(fit2,coef = 1,n = Inf,adjust.method = "BH",sort.by = "logFC") # 结果
+dif <- tmpOut[tmpOut$P.Value <= 0.05 & abs(tmpOut$logFC) > 0,]
+dim(dif)
+write.csv(tmpOut,file = "/data02/huzhiyang_03/FLD/result/12.脂质组/4w_0w/diff_4w_0w.csv")
+
+df_diff <- read.csv("/data02/huzhiyang_03/FLD/result/12.脂质组/4w_0w/diff_4w_0w.csv",header = T)
+df_diff <- df_diff %>% data.table::setnames(c(1,2,6),c("symbol", "log2FoldChange", "padj"))
+
+volcano <- VolcanoPlot(df_diff, log2FC = 0.25, padj = 0.05, 
+                       title = "4w vs 0w", label.max = 20)
+
+save_plot(volcano, "/data02/huzhiyang_03/FLD/result/12.脂质组/4w_0w/VolcanoPlot_0w4w",
+          if_pdf = T,width = 6,height = 5)
+
+##Fig.2G####
+Pericentral <- c("Abcc2","Akr1c6","Aldh1a1","Aldh3a2","Ang","Aqp9","Blvrb","Cldn2","Cpox","Csad","Cyp1a2",
+                 "Cyp27a1","Cyp2c29","Cyp2c50","Cyp2c67","Cyp2c68","Cyp2d9","Cyp2e1","Cyp3a11","Cyp4a12a",
+                 "Entpd5","Glul","Gstm2","Gstm3","Gstm6","Gulo","Lect2","Nr1i3","Oat","Pex11a","Pon1",
+                 "Prodh","Rgn","Rnase4","Serpina6","Slc22a1","Slco1b2")
+Periportal <- c("Aldh1b1","App","Arsg","C9","Cdh1","Cryl1","Cyb561","Cyp2f2","Fgfr1","Foxq1","Ftcd",
+                "Gas2","Gls2","Hal","Hpx","Hsd11b1","Hsd17b13","Hsd17b6","Ly6e","Mfge8","Mug2","Pigr",
+                "Rbp1","Sds","Sdsl","Serpina12","Sfxn1","Sox9","Spp1","Tstd1","Uroc1","Wfdc2")
+
+Zonation_list <- list("Pericentral" = Pericentral,"Periportal"= Periportal)
+
+hep <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Hepatocyte_16.rds")
+obj1 <- AddModuleScore(object = hep, features = Zonation_list, ctrl = 100,  name = glue("Zonation"))
+colnames(obj1@meta.data)[(ncol(obj1@meta.data)-length(names(Zonation_list))+1):ncol(obj1@meta.data)] <- names(Zonation_list)
+
+obj1@meta.data$Zonation_score <- obj1@meta.data$Periportal - obj1@meta.data$Pericentral
+
+s_inner <- function(r, R = 10){
+  h  = R/2 * sqrt(3) 
+  if(r < h){
+    s = r^2 * pi
+  }
+  if (r == R){
+    s = 3/2 * sqrt(3) * R^2
+  }
+  if (h < r & r< R){
+    theta <- 2*acos(h/r)
+    s <- r^2 * pi - 3 * r^2 * (theta - sin(theta))
+  }
+  return(s)
+}
+
+prob_data <- data.frame(1,1)
+colnames(prob_data) <- c("layer","area")
+for(n in 1:9){
+  s1 <- s_inner(r=n)
+  s2 <- s_inner(r=n+1)
+  s_layer <- s2 - s1
+  s_layer_data <- data.frame(n,s_layer)
+  colnames(s_layer_data) <- c("layer","area")
+  prob_data <- rbind(prob_data, s_layer_data)
+}
+prob_data <- prob_data[-1,]
+
+prob_data$prob <- prob_data$area/sum(prob_data$area)
+Cv_prob <- prob_data %>%
+  filter(layer %in% c(1, 2, 3)) %>%
+  summarise(total_prob = sum(prob)) %>%pull(total_prob)
+Mid_prob <- prob_data %>%
+  filter(layer %in% c(4, 5, 6)) %>%
+  summarise(total_prob = sum(prob)) %>%pull(total_prob)
+Pv_prob <- prob_data %>%
+  filter(layer %in% c(7, 8, 9)) %>%
+  summarise(total_prob = sum(prob)) %>%pull(total_prob)
+
+
+Zonation_data <- obj1@meta.data %>% dplyr::select("orig.ident", "seurat_clusters", "Zonation_score") %>% 
+  rownames_to_column(var = "Barcode") %>% arrange(desc(Zonation_score))
+
+Cv_count <- ceiling(nrow(Zonation_data) * Cv_prob)
+Pv_count <- ceiling(nrow(Zonation_data) * Pv_prob)
+
+Pv_cell <- Zonation_data %>%
+  arrange(desc(Zonation_score)) %>%
+  head(Pv_count)%>% pull(Barcode)
+Cv_cell <- Zonation_data %>%
+  arrange(Zonation_score) %>%
+  head(Cv_count)%>% pull(Barcode)
+
+obj1@meta.data %<>% mutate(Barcode = rownames(obj1@meta.data)) %>% 
+  mutate(Liver_zone = case_when(
+    Barcode %in% Pv_cell ~ "PV",
+    Barcode %in% Cv_cell ~ "CV",
+    T ~ "Mid"
+  )) 
+write.csv(obj1@meta.data,"/data02/huzhiyang_03/FLD/result/22.肝分区/hep/Zonation_data.csv")
+table(obj1@meta.data$Liver_zone)
+
+hep <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Hepatocyte_16.rds")
+hep_filter <- subset(hep, Liver_zone %in% c("CV","PV") & time %in% c("0w","4w"))
+obj <- AddModuleScore(hep_filter, features=gl_1, name = "") #AddModuleScore_Ucell
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+
+df <- obj@meta.data %>% dplyr::select(c(Liver_zone,names(gl_1))) %>% 
+  reshape2::melt(id = "Liver_zone")
+colnames(df) <- c("Liver_zone","pathway","score")
+my_comparisons <- list( c("PV", "CV"))
+p1 <- ggplot(df, aes(x = Liver_zone, y = score, fill = Liver_zone)) +
+  geom_violin(width = 0.8)+
+  geom_boxplot(width=0.1, fill="white",outlier.shape = NA)+
+  facet_wrap(~pathway, scales = "free_y",ncol = 4) +
+  stat_compare_means(comparisons=my_comparisons, label="p.signf",method = 'wilcox.test', #p.format 
+                     symnum.args=list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1),
+                                      symbols = c("****", "***", "**", "*", "ns"))) +
+  theme_classic()+
+  cowplot::panel_border(size = 0.5,color = "black")+
+  scale_fill_manual(values = FLD_col) +
+  labs(title = "Catabolic process",
+       x = "Liver zone",
+       y = "Score") +
+  theme(panel.grid.minor = element_blank(),legend.position = "none")
