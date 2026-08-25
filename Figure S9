@@ -1,0 +1,198 @@
+##Fig.S9A####
+gl_syn <- read.gmt("/data02/huzhiyang_03/FLD/result/geneset/KEGG_REACTOME三大代谢.gmt")
+gl_syn <- gl_syn %>% filter(nchar(gene) > 0)  
+gl_1 <- unique(gl_syn$term) %>%
+  map(~ gl_syn %>% filter(term == .x) %>% pull(gene) %>% unique()) %>%
+  setNames(unique(gl_syn$term))
+
+allcell <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/allcell_0826.rds")
+obj <- AddModuleScore(allcell, features=gl_1, name = "")
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- met_label$Pathway
+obj@meta.data$time <- factor(obj@meta.data$time, levels = c("0w","4w","8w","16w","24w","36w"))
+write.csv(obj@meta.data, "/data02/huzhiyang_03/FLD/result/09.核测序/Allcell/三大代谢_metabolism_metadata.csv")
+
+metadata <- read.csv("/data02/huzhiyang_03/FLD/result/09.核测序/Allcell/三大代谢_metabolism_metadata.csv",header = T,row.names = 1,check.names = F)
+metadata <- metadata %>%
+  dplyr::select(c("time","celltype_new",met_label$Pathway)) %>% filter(celltype_new %in% c("Hepatocyte"))
+
+df <- metadata %>% 
+  group_by(time,celltype_new) %>% summarise_all(mean, na.rm = TRUE) %>% 
+  as.data.frame()
+
+plot_data <- df %>%
+  pivot_longer(
+    cols = -c(time, celltype_new), 
+    names_to = "Pathway",    
+    values_to = "Score"       
+  ) %>% left_join(met_label,by = "Pathway")
+
+
+plot_data$Pathway <- factor(plot_data$Pathway,levels = met_label$Pathway)
+plot_data$time <- factor(plot_data$time,levels = c("0w","4w","8w","16w","24w","36w"))
+
+p <-ggplot(plot_data, aes(x = time, y = Pathway, fill = Score)) +
+  geom_tile(color = "white") + 
+  facet_grid(Annotation~ celltype_new,scales = "free_y",space = "free_y",   
+             switch = "y") + 
+  scale_fill_gradient2(
+    low = "#3288bd",   
+    mid = "white",    
+    high = "#d53e4f",  
+    midpoint = 0      
+  ) +
+  theme_minimal() + 
+  labs(
+    title = "Hepatocyte",
+    x = "Time",
+    y = "pathway",
+    fill = "Score"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1,colour = "black",size = 10, face = "bold"), 
+    axis.text.y = element_text(colour = "black",size = 10), 
+    strip.text = element_text(size = 12, face = "bold"), 
+    panel.grid = element_blank() 
+  )
+p
+save_plot(p,"/data02/huzhiyang_03/FLD/result/09.核测序/Allcell/heapmap_三大代谢_metabolism_肝细胞",if_pdf = T,width = 10,height = 10)
+
+
+##Fig.S9B####
+pseudotime <- pseudotime(cds) %>% as.data.frame()
+pseudotime$barcode <- rownames(pseudotime)
+colnames(pseudotime)[1] <- "pseudotime"
+
+data <- cds@colData@listData %>% as.data.frame()
+data$barcode <- rownames(data)
+data_merged <- merge(data, pseudotime, by = "barcode")
+data_merged <- data_merged[data_merged$pseudotime != Inf,]
+
+library(ggridges)
+unique(data_merged$subtype)
+
+data_merged$subtype <- factor(data_merged$subtype, levels = c("Lyve1-LSEC","Vegfc-LSEC","Prkcb-LSEC","Serpina1e-LSEC"))
+data_merged$time <- factor(data_merged$time, levels = c("36w","24w"))
+p3_pretty <- ggplot(data_merged, aes(x = pseudotime, y = time, fill = subtype)) + 
+  geom_density_ridges(
+    aes(height = after_stat(count)), 
+    stat = "density",
+    adjust = 1.5, 
+    color = "white",  
+    linewidth = 0.4, 
+    scale = 0.95,  
+    alpha = 0.7,  
+    panel_scaling = TRUE
+  ) + 
+  scale_y_discrete(position = "left", expand = expansion(mult = c(0.01, 0.1))) + 
+  scale_x_continuous(position = "bottom", expand = c(0, 0)) + 
+  scale_fill_manual(values = FLD_col) +
+  theme_classic() + 
+  theme(
+    axis.line.y = element_line(color = "black", linewidth = 0.6),
+    axis.ticks.y = element_line(color = "black", linewidth = 0.5),
+    axis.ticks.length.y = unit(0.15, "cm"),
+    axis.line.x = element_line(color = "black", linewidth = 0.6),
+    axis.ticks.x = element_line(color = "black", linewidth = 0.5),
+    axis.text = element_text(colour = "black", size = 10, face = "plain"),
+    axis.title = element_text(colour = "black", size = 11, face = "plain"),
+    panel.grid = element_blank(),
+    panel.background = element_blank(),
+    legend.position = "right",
+    legend.title = element_text(face = "plain", size = 10),
+    legend.text = element_text(size = 9),
+    legend.key.size = unit(0.4, "cm")
+  ) +
+  labs(
+    x = "Pseudotime",
+    y = "",
+    fill = "Cell Subtype"
+  )
+p3_pretty
+
+##Fig.S9C####
+df_exp <- FetchData(scRNA, vars = c("subtype","time","Cd34")) %>% setnames(3, "exp")
+df_exp %>% group_by(subtype) %>% 
+  summarise(mean_exp = mean(exp))
+
+gene_data <- FetchData(scRNA, vars = c("Cd34", "subtype")) %>% data.table::setnames(c(1,2),c("exp","Group")) 
+df_mean <- gene_data %>% 
+  group_by(Group) %>% summarise_all(mean) %>% as.data.frame()
+gene_data$Group <- factor(gene_data$Group, levels = c("Serpina1e-LSEC","Prkcb-LSEC","Vegfc-LSEC","Lyve1-LSEC"))
+df_mean$Group <- factor(df_mean$Group, levels = c("Serpina1e-LSEC","Prkcb-LSEC","Vegfc-LSEC","Lyve1-LSEC"))
+
+max_mean <- max(df_mean$exp)
+y_positions <- seq(from = max_mean * 1.05, by = max_mean * 0.1, length.out = 5)
+
+p <-  ggplot(gene_data, aes(x =Group ,y = exp ,fill = Group))+
+  geom_bar(data = df_mean, aes(x = Group, y = exp, fill = Group),stat = "identity", width = 0.6, alpha = 0.6)+
+  scale_fill_manual(values=FLD_col)+ #颜色
+  scale_color_manual(values=FLD_col)+
+  guides(fill=FALSE) +
+  # stat_summary(fun.data = mean_fun, geom = "text", size=3 , color="black", vjust = -0.8) +
+  labs(title = "Cd34",
+       x = "",
+       y = "Expression Level") +
+  theme_classic(base_line_size = 0.5)+# 主题设置，这个是无线条主题 # 坐标轴的粗细
+  theme(plot.title = element_text(size = 10,colour = "black",hjust = 0.5,face = "bold"),
+        legend.title = element_text(color="black", # 修改图例的标题
+                                    size=10, face="bold"),
+        legend.text = element_text(color="black", # 设置图例标签文字
+                                   size = 10, face = "bold"),
+        axis.text.x = element_text(size = 10,  # 修改X轴上字体大小，
+                                   color = "black", # 颜色
+                                   face = "bold", #  face取值：plain普通，bold加粗，italic斜体，bold.italic斜体加粗
+                                   vjust = 1, # 位置
+                                   hjust = 0.95, 
+                                   angle = 30), #角度
+        axis.text.y = element_text(size = 10,  color = "black",face = "bold", vjust = 0.5, 
+                                   hjust = 0.5, angle = 0)) 
+p
+
+
+##Fig.S9D####
+obj_ST <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/ST/RDS_大类/merged_rds.rds")
+ncol(obj_ST)
+Idents(obj_ST) <- "sample"
+allCells=names(Idents(obj_ST))
+allType = levels(Idents(obj_ST))
+choose_Cells = unlist(lapply(allType, function(x){
+  cgCells = allCells[Idents(obj_ST)== x ]
+  cg=sample(cgCells,round(length(cgCells)*0.1,digits = 0)) #按10%抽样
+  cg
+}))
+cg_sce = obj_ST[, allCells %in% choose_Cells]
+
+
+unique(cg_sce$sample)
+cg_sce@meta.data$sample <- as.character(cg_sce@meta.data$sample)
+cg_sce@meta.data$sample[cg_sce@meta.data$sample %in% c("ND")] <- "normal"
+table(cg_sce@meta.data$sample)
+matrix<-as.matrix(cg_sce@assays$Spatial@counts)
+
+cg_sce@meta.data$barcode <- rownames(cg_sce@meta.data)
+ann <- cg_sce@meta.data[,c("sample","barcode")]
+ann <- as.matrix(ann)
+gene.order <- read.table("/data02/liuxiaofei_2/GIST/GIST/2023.3.20/infercnv/output_positional.txt")
+head(matrix)[1:5,1:5]
+gene_list_matrix <- rownames(matrix)
+head(gene_list_matrix)
+gene_list_location <- gene.order$V1
+intersect <- intersect(gene_list_matrix, gene_list_location)
+colnames(gene.order) <- c("gene", "chr", "start", "end")
+gene.order$start <- as.numeric(gene.order$start)
+gene.order$end <- as.numeric(gene.order$end)
+
+rownames(gene.order) <- gene.order$gene
+gene.order$gene <- NULL
+
+library(infercnv)
+inferobj<-CreateInfercnvObject(raw_counts_matrix=matrix,
+                               annotations_file=ann,
+                               gene_order_file=gene.order,
+                               ref_group_names=c("normal"))
+
+infercnv_obj = infercnv::run(inferobj,cutoff=0.1,
+                             out_dir="/data02/liuxiaofei/FLD/2026.1.12_figure/inferCNV_by_orig.ident/",
+                             cluster_by_groups=TRUE,
+                             denoise=TRUE,plot_steps =T,
+                             HMM=F)
