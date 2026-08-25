@@ -1,0 +1,268 @@
+##Fig.1B####
+df_list <- list()
+for (cur_group in c("WD","ND")) {
+  df <- readxl::read_xlsx("/data02/huzhiyang_03/FLD/实验数据/体重_WD_Foldchange.xlsx",sheet = cur_group)
+  df1 <- reshape2::melt(df, id = "time")
+  colnames(df1) <- c("time","sample","FoldChange")
+  df1$group <- cur_group
+  df_list[[cur_group]] <- df1
+}
+df_merge <- bind_rows(df_list)
+write.csv(df_merge,"/data02/huzhiyang_03/FLD/result/33.实验数据/body_merge_WD.csv")
+
+df_merge <- read.csv("/data02/huzhiyang_03/FLD/result/33.实验数据/bodyweight/body_merge_WD.csv",header = T,row.names = 1)
+
+p1 <- ggplot(df_merge, aes(x = time, y = FoldChange, color = group, group = group)) +
+  stat_summary(fun = mean, geom = "line", size = 1.2) +
+  stat_summary(fun = mean, geom = "point", size = 3) +
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", width = 0.15, size = 0.8) +
+  scale_x_continuous(
+    breaks = c(0,4, 8, 12, 16, 20, 24, 28,32,36),
+    labels = c("0w","4w", "8w", "12w", "16w","20w", "24w","28w", "32w","36w")
+  )+
+  theme_classic(base_size = 14) +
+  labs(x = "Week", y = "Body weight (Fold change)", color = "Group") +
+  scale_color_manual(values = FLD_col)
+p1
+fit_anova <- aov(FoldChange ~ group * time, data = df_merge)
+summary(fit_anova)
+#<2e-16
+save_plot(p1, "/data02/huzhiyang_03/FLD/result/33.实验数据/lineplot_bodyweight",if_pdf = T,width = 8,height = 5)
+
+df_merge <- readxl::read_xlsx("/data02/huzhiyang_03/FLD/实验数据/体重_肝重merge.xlsx",sheet = 5)
+df_merge <- df_merge %>% filter(!is.na(Foldchange))
+df_merge$time <- factor(df_merge$time,levels = c("0w","4w","8w","12w","16w","20w","24w","36w"))
+p2 <- ggplot(df_merge, aes(x = time, y = Foldchange, color = group, group = group)) +
+  stat_summary(fun = mean, geom = "line", size = 1.2) +
+  stat_summary(fun = mean, geom = "point", size = 3) +
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", width = 0.15, size = 0.8) +
+  theme_classic(base_size = 14) +
+  labs(x = "Week", y = "Liver weight (Fold change)", color = "Group") +
+  scale_color_manual(values = FLD_col)
+p2
+save_plot(p2, "/data02/huzhiyang_03/FLD/result/33.实验数据/lineplot_liverweight",if_pdf = T,width = 8,height = 5)
+fit_anova <- aov(Foldchange ~ group * time, data = df_merge)
+summary(fit_anova)
+
+##Fig.1D####
+##Sirius Red####
+df_merge <- readxl::read_xlsx("/data02/huzhiyang_03/FLD/实验数据/SiriusRed.xlsx",sheet = "WD")
+df_plot <- reshape2::melt(df_merge)
+colnames(df_plot) <- c("time","score")
+
+df_plot$time <- factor(df_plot$time,levels = c("0w","4w","8w","12w","16w","20w","24w","36w"))
+df_plot1 <- df_plot %>%
+  group_by(time) %>%
+  summarize(Value = mean(score), SD = sd(score), .groups = "drop")
+df_plot1$time <- factor(df_plot1$time,levels = c("0w","4w","8w","12w","16w","20w","24w","36w"))
+comparisons = list(c("0w","4w"),c("4w","8w"),c("8w","12w"),c("12w","16w"),
+                   c("16w","20w"),c("20w","24w"),c("24w","36w"))
+
+p1 <- ggplot(data =df_plot , aes(x = time, y = score)) +
+  geom_bar(data =df_plot1, aes(x = time, y = Value, fill = time),
+           stat = "identity", width = 0.8, alpha = 0.6) +
+  geom_errorbar(data = df_plot1, aes(x = time, y = Value,ymin = Value - SD, ymax = Value + SD),
+                width = 0.2, size = 0.8, color = "black") +
+  geom_jitter(data = df_plot, aes(x = time, y = score, color = time),
+              width = 0.2, size = 2, alpha = 0.8) + 
+  stat_compare_means(comparisons=comparisons,label="p.format",method = 'wilcox.test',
+                     symnum.args=list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1.01),
+                                      symbols = c("****", "***", "**", "*", "ns")),
+                     label.y = c(9, 12, 15, 18, 21, 24, 27, 30)) +
+  labs(title = "Sirius Red",
+       x = "",
+       y = "positive area (%)") +
+  scale_fill_manual(values = FLD_col) + 
+  scale_color_manual(values = FLD_col)+ 
+  theme(
+    plot.title    = element_text(color = 'black', size   = 10, hjust = 0.5,face = "bold"),
+    axis.text.x   = element_text(color = 'black', size = 8, angle = 0,hjust = 0.5,face = "bold"),#
+    axis.text.y   = element_text(color = 'black', size = 8, angle = 0),
+    axis.title.x  = element_text(color = 'black', size = 14, angle = 0),
+    axis.title.y  = element_text(color = 'black', size = 14, angle = 90),
+    panel.background=element_rect(fill="white"), 
+    legend.position = "none",
+    panel.border = element_rect(linetype = 'solid', size = 0.5,fill = NA) 
+  )
+p1
+save_plot(p1, "/data02/huzhiyang_03/FLD/result/33.实验数据/SiriusRed_WD",if_pdf = T,width = 6,height = 4)
+
+
+##aSMA####
+df_merge <- readxl::read_xlsx("/data02/huzhiyang_03/FLD/实验数据/aSMA.xlsx",sheet = "WD")
+df_plot <- reshape2::melt(df_merge)
+colnames(df_plot) <- c("time","score")
+
+df_plot$time <- factor(df_plot$time,levels = c("0w","4w","8w","12w","16w","20w","24w","36w"))
+df_plot1 <- df_plot %>%
+  group_by(time) %>%
+  summarize(Value = mean(score), SD = sd(score), .groups = "drop")
+df_plot1$time <- factor(df_plot1$time,levels = c("0w","4w","8w","12w","16w","20w","24w","36w"))
+comparisons = list(c("0w","4w"),c("4w","8w"),c("8w","12w"),c("12w","16w"),
+                   c("16w","20w"),c("20w","24w"),c("24w","36w"))
+
+p1 <- ggplot(data =df_plot , aes(x = time, y = score)) +
+  geom_bar(data =df_plot1, aes(x = time, y = Value, fill = time),
+           stat = "identity", width = 0.8, alpha = 0.6) +
+  geom_errorbar(data = df_plot1, aes(x = time, y = Value,ymin = Value - SD, ymax = Value + SD),
+                width = 0.2, size = 0.8, color = "black") +
+  geom_jitter(data = df_plot, aes(x = time, y = score, color = time),
+              width = 0.2, size = 2, alpha = 0.8) + 
+  stat_compare_means(comparisons=comparisons, label="p.signf",method = 'wilcox.test',
+                     symnum.args=list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1.01),
+                                      symbols = c("****", "***", "**", "*", "ns")),
+                     label.y = c(15, 20, 25, 30, 35, 40, 45, 50)) +
+  labs(title = "a-SMA",
+       x = "",
+       y = "positive area (%)") +
+  scale_fill_manual(values = FLD_col) + # 
+  scale_color_manual(values = FLD_col)+  #
+  theme(
+    plot.title    = element_text(color = 'black', size   = 10, hjust = 0.5,face = "bold"),
+    axis.text.x   = element_text(color = 'black', size = 8, angle = 0,hjust = 0.5,face = "bold"),#
+    axis.text.y   = element_text(color = 'black', size = 8, angle = 0),
+    axis.title.x  = element_text(color = 'black', size = 14, angle = 0),
+    axis.title.y  = element_text(color = 'black', size = 14, angle = 90),
+    panel.background=element_rect(fill="white"), 
+    legend.position = "none",
+    panel.border = element_rect(linetype = 'solid', size = 0.5,fill = NA)
+  )
+p1
+save_plot(p1, "/data02/huzhiyang_03/FLD/result/33.实验数据/aSMA_WD",if_pdf = T,width = 6,height = 4)
+
+##OilRedO####
+df_merge <- readxl::read_xlsx("/data02/huzhiyang_03/FLD/实验数据/OilRedO.xlsx",sheet = "WD")
+df_plot <- reshape2::melt(df_merge)
+colnames(df_plot) <- c("time","score")
+df_plot <- na.omit(df_plot)
+
+df_plot$time <- factor(df_plot$time,levels = c("0w","4w","8w","12w","16w","20w","24w","36w"))
+df_plot1 <- df_plot %>%
+  group_by(time) %>%
+  summarize(Value = mean(score), SD = sd(score), .groups = "drop")
+df_plot1$time <- factor(df_plot1$time,levels = c("0w","4w","8w","12w","16w","20w","24w","36w"))
+comparisons = list(c("0w","4w"),c("4w","8w"),c("8w","12w"),c("12w","16w"),
+                   c("16w","20w"),c("20w","24w"),c("24w","36w"))
+
+p1 <- ggplot(data =df_plot , aes(x = time, y = score)) +
+  geom_bar(data =df_plot1, aes(x = time, y = Value, fill = time),
+           stat = "identity", width = 0.8, alpha = 0.6) +
+  geom_errorbar(data = df_plot1, aes(x = time, y = Value,ymin = Value - SD, ymax = Value + SD),
+                width = 0.2, size = 0.8, color = "black") +
+  geom_jitter(data = df_plot, aes(x = time, y = score, color = time),
+              width = 0.2, size = 2, alpha = 0.8) +  
+  stat_compare_means(comparisons=comparisons, label="p.signf",method = 'wilcox.test',
+                     symnum.args=list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1.01),
+                                      symbols = c("****", "***", "**", "*", "ns")),tip.length = 0,
+                     label.y = c(35, 40, 45, 50, 55, 60, 65, 70)) +
+  labs(title = "Oil Red O",
+       x = "",
+       y = "positive area (%)") +
+  scale_fill_manual(values = FLD_col) +
+  scale_color_manual(values = FLD_col)+ 
+  theme(
+    plot.title    = element_text(color = 'black', size   = 10, hjust = 0.5,face = "bold"),
+    axis.text.x   = element_text(color = 'black', size = 8, angle = 0,hjust = 0.5,face = "bold"),#
+    axis.text.y   = element_text(color = 'black', size = 8, angle = 0),
+    axis.title.x  = element_text(color = 'black', size = 14, angle = 0),
+    axis.title.y  = element_text(color = 'black', size = 14, angle = 90),
+    panel.background=element_rect(fill="white"), 
+    legend.position = "none",
+    panel.border = element_rect(linetype = 'solid', size = 0.5,fill = NA)
+  )
+p1
+save_plot(p1, "/data02/huzhiyang_03/FLD/result/33.实验数据/OilRedO_WD",if_pdf = T,width = 6,height = 4)
+
+##Fig.1E-G####
+allcell <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/allcell_0826.rds")
+allcell@meta.data$UMAP1 <- allcell@reductions$umap@cell.embeddings[,"UMAP_1"]
+allcell@meta.data$UMAP2 <- allcell@reductions$umap@cell.embeddings[,"UMAP_2"]
+
+
+df <- FetchData(object=allcell, vars=c("UMAP1","UMAP2","celltype_new"))
+head(df)
+
+cols2 <- c("#FFCCBC", "#E1EFFF", "#E1BEE7", "#81D4FA","#FFC98B",  "#A5D6A7","#B2DFDB")
+names(cols2) <- c("B cell","Cholangiocyte","Endothelial","HSC","Hepatocyte","Myeloid","T cell")
+
+p1 <- ggplot(df , aes(x = UMAP1, y = UMAP2)) +
+  geom_point(aes(color = celltype_new), size = 0.2) +
+  scale_color_manual(values = cols2,guide = guide_legend(override.aes = list(size = 3)))+
+  theme_dr() +
+  theme(aspect.ratio = 1,
+        panel.background = element_blank(),
+        panel.grid = element_blank(),
+        axis.line = element_line(arrow = arrow(type="closed", length = unit(0.05,"inches")) ),
+        axis.title = element_text(hjust = 0.05, size=12))
+
+
+val_list <- c("Ptprc","Ms4a1","Cd79a","Sox9","Krt19","Flt1","Cdh5",
+              "Acta2","Col3a1","Hnf4a","Cyp2e1","Clec4f","Lyz2","Cd3e","Trac")
+allcell <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/allcell_0826.rds")
+allcell@meta.data$celltype_new <- factor(allcell@meta.data$celltype_new,levels = c("B_cell","Cholangiocyte","Endothelial","Hepatic_stellate_cell","Hepatocyte","Macrophage_Kupffer","T_cell"))
+
+Dotfeatures1 <- DotPlot(allcell, features = val_list, group.by = 'celltype_new', cols = 'Spectral') + coord_flip() +
+  scale_color_gradient2(low="#005fbf",mid="white",high="#bf0000") + #low="#005fbf",mid="white",high="#bf0000"
+  geom_point(aes(size = pct.exp), shape = 21, colour = "black", stroke = 0.5) +
+  guides(size = guide_legend(override.aes = list(shape = 21, colour = "black", fill = "white"))) +
+  scale_size(breaks = c(0, 25, 50, 75)) +
+  scale_size(breaks = c(0, 25, 50, 75)) +
+  theme(
+    panel.background = element_rect(fill = "white"),  # 主面板背景
+    plot.background = element_rect(fill = "white"),   # 整个绘图区背景
+    panel.grid = element_blank()                      # 移除网格线
+  ) +
+  theme(
+    plot.title    = element_text(color = 'black', size   = 20, hjust = 0.5),
+    plot.subtitle = element_text(color = 'black', size   = 16,hjust = 0.5),
+    plot.caption  = element_text(color = 'black', size   = 16,face = 'italic', hjust = 1),
+    axis.text.x   = element_text(color = 'black', size = 8, angle = 45,hjust = 1),
+    axis.text.y   = element_text(color = 'black', size = 8, angle = 0),
+    axis.title.x  = element_text(color = 'black', size = 8, angle = 0),
+    axis.title.y  = element_text(color = 'black', size = 8, angle = 90),
+    legend.title=element_text(size = 8),
+    legend.text   = element_text(color = 'black', size   = 8),
+    axis.line.y = element_line(color = 'black', linetype = 'solid'), # y轴线特征
+    axis.line.x = element_line (color = 'black',linetype = 'solid'), # x轴线特征
+    panel.background=element_rect(fill="white"),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    strip.text = element_text(size = 8)
+  ) +
+  RotatedAxis() +
+  labs(x = "", y = "", color = "Average Expression", size = "Percent Expression") +
+  guides(size=guide_legend(override.aes=list(shape=21, colour="black", fill="white")))
+
+Dotfeatures1
+
+cols2 <- c("#FFCCBC", "#E1EFFF", "#E1BEE7", "#81D4FA","#FFC98B",  "#A5D6A7","#B2DFDB")
+df_prop <- allcell@meta.data %>%
+  mutate(celltype = celltype_new) %>% 
+  group_by(time, celltype) %>% #celltype_new
+  count(time, celltype) %>% 
+  group_by(time) %>%
+  mutate(Proportion = n / sum(n) * 100) %>% 
+  ungroup()
+
+df_mean <- df_prop %>%
+  group_by(time, celltype) %>%
+  summarise(mean_prop = mean(Proportion)) %>%
+  ungroup()
+df_mean$time <- factor(df_mean$time, levels = c("0w","4w","8w","16w","24w","36w"))
+
+p1 <- ggplot(df_mean, aes(x = time, y = mean_prop, 
+                          stratum = celltype, alluvium = celltype, fill = celltype)) +
+  ggalluvial::geom_alluvium(alpha = 0.5, width = 1/5, knot.pos = 0.4) +
+  ggalluvial::geom_stratum(width = 2/3, color = "transparent") +
+  scale_fill_manual(values = cols2)+
+  theme_minimal() +
+  labs(title = "Cell Proportion", y = "Mean Percentage (%)") +
+  theme(panel.grid = element_blank())+
+  theme_bw()+
+  theme(panel.grid = element_blank(),
+        axis.title.y = element_text(size = 10, color = "black",face = "bold", vjust = 1.9, hjust = 0.5, angle = 90),
+        axis.title.x = element_text(size = 10, color = "black",face = "bold", vjust = 1.9, hjust = 0.5, angle = 0),
+        axis.text.x = element_text(size = 8,color = "black",face = "plain"),
+        axis.text.y = element_text(size = 8,color = "black",face = "plain")
+        
+  )+  cowplot::panel_border(size = 2)
+p1
