@@ -1,0 +1,588 @@
+##Fig.5A####
+data <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Kupffer_16_harmony.rds")
+unique(data@meta.data$subtype_new2)
+
+scRNA_sub <- subset(data, time %in% c("16w", "24w"))
+
+gl_syn <- read.gmt(glue("/data02/huzhiyang_03/FLD/result/10.巨噬细胞/吞噬功能/吞噬通路.gmt"))
+gl_syn <- gl_syn %>% filter(nchar(gene) > 0)
+gl_1 <- unique(gl_syn$term) %>%
+  map(~ gl_syn %>% filter(term == .x) %>% pull(gene) %>% unique()) %>%
+  setNames(unique(gl_syn$term))
+
+
+obj <- AddModuleScore(scRNA_sub, features=gl_1, name = "", ctrl = 1000) 
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+
+names(gl_1)
+
+library(ggpubr)
+mean_fun <- function(x){
+  return(data.frame(y = max(x), label = round(mean(x),3)))
+}
+data_plot <- obj@meta.data
+unique(data_plot$subtype_new2)
+data_plot <- data_plot[data_plot$subtype_new2 %in% c("Mac3", "moKC2", "Mac1", "Mac2", "moKC1", "Monocyte"), ]
+unique(data_plot$orig.ident)
+
+colnames(data_plot)
+data_plot_bysample <- data_plot %>%
+  group_by(orig.ident) %>%
+  summarise(mean_score = mean(`positive regulation of phagocytosis`), time = time) %>%
+  unique()
+
+ggplot(data_plot, aes(x = time,y = .data[[names(gl_1)[1]]] ,fill = time))+
+
+  geom_violin(width = 0.8)+
+  geom_boxplot(width=0.1, fill="white",outlier.shape = NA)+
+  stat_compare_means(comparisons =  list(c("16w","24w")),
+                     method = 'wilcox.test',hide.ns = F,label = "p.format",size = 4)+
+  theme_classic()+
+  cowplot::panel_border(size = 0.5,color = "black")+
+  scale_fill_manual(values=c("#FFCCBC", "#E1EFFF", "#E1BEE7", "#81D4FA", "#FFC98B", 
+                             "#A5D6A7", "#B2DFDB", "#FFE0B2", "#E0E0DF","#FFF9C4", 
+                             "#F8BBD0"))+ 
+  labs(title = names(gl_1),
+       x = "",
+       y = "Score") +
+  theme(panel.grid.minor = element_blank(),legend.position = "none")+
+  stat_summary(fun.data = mean_fun, geom = "text", size=3 , color="black")
+
+
+##Fig.5B####
+KC <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Kupffer_16_harmony.rds")
+obj <- subset(KC, subtype_new %in% c("Macrophage","Monocyte","mono_KC"))
+df <- filter(obj@meta.data,time %in% c("0w","4w","8w","16w","24w","36w"))
+df_prop <- df %>%
+  group_by(time, subtype_new) %>%
+  dplyr::count(time, subtype_new) %>% ungroup()
+
+df_prop$total_cell <- c(rep(30294, 3), rep(23199, 3), rep(31272, 3), rep(23413, 3), rep(17239, 3), rep(23635, 3)) #rep(3.0294, 2),
+df_prop <- df_prop %>% mutate(Proportion = n / total_cell )
+
+
+df_mean <- df_prop %>%
+  group_by(time, subtype_new) %>%
+  summarise(mean_prop = mean(Proportion)) %>%
+  ungroup()
+
+df_mean$time <- factor(df_mean$time, levels = c("0w","4w","8w","16w","24w","36w"))
+
+p1 <- ggplot(df_mean, aes(x = time, y = mean_prop, 
+                          stratum = subtype_new, alluvium = subtype_new, fill = subtype_new)) +
+  ggalluvial::geom_alluvium(alpha = 0.5, width = 1/5, knot.pos = 0.4) +
+  ggalluvial::geom_stratum(width = 2/3, color = "transparent") +
+  scale_fill_manual(values = c("#FFCCBC", "#E1EFFF","#FFE0B2"))+
+  theme_minimal() +
+  labs(title = "BDMC Proprotion of Total Cells", y = "") +
+  theme(panel.grid = element_blank())+
+  theme_bw()+
+  theme(panel.grid = element_blank(),
+        axis.title.y = element_text(size = 10, color = "black",face = "bold", vjust = 1.9, hjust = 0.5, angle = 90),
+        axis.title.x = element_text(size = 10, color = "black",face = "bold", vjust = 1.9, hjust = 0.5, angle = 0),
+        axis.text.x = element_text(size = 8,color = "black",face = "plain"),
+        axis.text.y = element_text(size = 8,color = "black",face = "plain")
+  )+  cowplot::panel_border(size = 2)
+p1
+
+##Fig.5C-F####
+
+allcell <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/allcell_0826.rds")
+allcell@meta.data <- allcell@meta.data %>% mutate(subtype = case_when(
+  celltype_new == "T_cell" & subtype_new == "CD4T" ~ "CD4T",
+  celltype_new == "T_cell" & subtype_new != "CD4T" ~ "CD8T",
+  TRUE ~ celltype_new
+))
+
+data_plot <- allcell %>% subset(time %in% c("16w","24w"))
+colnames(data_plot@meta.data)
+unique(data_plot@meta.data$SubCellType)
+
+Chisq_prop <- CellProp_Chisq_C1C2C3(Seurat.meta = data_plot@meta.data, 
+                                    meta.cluster = data_plot@meta.data$SubCellType, 
+                                    cluster.level = unique(data_plot@meta.data$SubCellType),
+                                    group = "time",
+                                    group_level = c("16w", "24w")
+)
+Chisq_prop
+
+obj_sc <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/合并scsn/CD8T.rds")
+data_plot <- obj_sc %>% subset(time %in% c("16w","24w"))
+colnames(data_plot@meta.data)
+unique(data_plot@meta.data$SubCellType)
+
+Chisq_prop <- CellProp_Chisq_C1C2C3(Seurat.meta = data_plot@meta.data, 
+                                    meta.cluster = data_plot@meta.data$SubCellType, 
+                                    cluster.level = unique(data_plot@meta.data$SubCellType),
+                                    group = "time",
+                                    group_level = c("16w", "24w")
+)
+Chisq_prop
+
+obj_sc <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/合并scsn/B_Plasma.rds")
+data_plot <- obj_sc %>% subset(time %in% c("16w","24w"))
+colnames(data_plot@meta.data)
+unique(data_plot@meta.data$SubCellType)
+
+Chisq_prop <- CellProp_Chisq_C1C2C3(Seurat.meta = data_plot@meta.data, 
+                                    meta.cluster = data_plot@meta.data$SubCellType, 
+                                    cluster.level = unique(data_plot@meta.data$SubCellType),
+                                    group = "time",
+                                    group_level = c("16w", "24w")
+)
+Chisq_prop
+
+obj_sc <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Endothelial_16.rds")
+data_plot <- obj_sc %>% subset(time %in% c("16w","24w"))
+data_plot <- subset(data_plot, subtype != "Lymphatic")
+colnames(data_plot@meta.data)
+unique(data_plot@meta.data$subtype)
+
+Chisq_prop <- CellProp_Chisq_C1C2C3(Seurat.meta = data_plot@meta.data, 
+                                    meta.cluster = data_plot@meta.data$subtype, 
+                                    cluster.level = unique(data_plot@meta.data$subtype),
+                                    group = "time",
+                                    group_level = c("16w", "24w")
+)
+Chisq_prop
+
+##Fig.5G####
+CD8T <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/合并scsn/CD8T.rds")
+obj <- CD8T %>% subset(SubCellType != "CD8_T_cycling")
+
+final_df <- data.frame()
+c("Prf1","Ifng","Gnly","Nkg7","Gzmb","Gzma","Cst7","Tnfsf10","Tnf","Il2","Fas")
+for (gene in  c("Gzmb","Gzmk","Gzma","Prf1","Fasl","Cst7","Nkg7")) {
+  gene_data <- obj %>% 
+    FetchData( vars = c(gene, "SubCellType")) %>% setnames(c(1,2), c("exp","group")) %>%    #####修改细胞类型的变量
+    dplyr::select(exp, group)
+  
+  df <- gene_data %>% group_by(group) %>% summarise(pct = PercentAbove(exp, threshold = 0), exp = mean(exp)) %>% 
+    unique() %>% mutate(genename = gene)
+  final_df <- rbind(final_df,df)
+}
+
+final_df <- final_df %>% group_by(genename) %>% mutate(scaled_exp =scale(exp)[,1]) %>% ungroup()
+
+final_df$group <- factor(final_df$group,
+                         levels= c("CD8_Tn","CD8_Tcm","CD8_Trm","CD8_Tem","CD8_Teff","CD8_Tex"))
+
+final_df$genename <- factor(final_df$genename, levels = c("Ifng","Fasl","Tnf","Gzmb","Gzma","Gzmk"))
+p <- ggplot(final_df, aes(x = group, y = genename, color = scaled_exp, size = pct)) +
+  geom_point() + 
+  # geom_text(aes(label = a), vjust = -1,)+
+  # theme_minimal()+
+  labs(title = glue("Cytotoxic marker - CD8T"),
+       x = "", y = "") +
+  # facet_wrap(celltype~ ., nrow = 1)+
+  scale_color_gradient2(low="#005fbf",mid="white",high="#bf0000",midpoint = 1) +
+  # scale_color_gradientn(colours = viridis::viridis(256)) +  # 根据表达量变化调色
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1,color = "black"),
+        axis.text.y = element_text(color = "black"),
+        panel.grid.minor = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_blank())
+p
+
+##Fig.5H####
+CD8T <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/合并scsn/CD8T.rds")
+gl_1 <- list("cytotoxicity" = c("Prf1","Ifng","Gnly","Nkg7","Gzmb","Gzma","Cst7","Tnfsf10","Tnf","Il2","Fasl"))
+
+obj <- AddModuleScore(CD8T, features=gl_1, name = "") #AddModuleScore_Ucell
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+# obj@meta.data$group <- paste(obj@meta.data$time, obj@meta.data$Liver_zone, sep = "_")
+
+p_list <- list()
+for (pathway in names(gl_1)) {  # bio c(18,37) cat 4 12
+  dat_p <- obj@meta.data %>%
+    filter(SubCellType != "CD8_T_cycling") %>% 
+    dplyr::select(c(SubCellType, score = pathway))
+  
+  sort_cell <- dat_p %>% group_by(SubCellType) %>% summarise(mean_score = mean(score)) %>% arrange(desc(mean_score)) %>% pull(SubCellType)
+  dat_p$SubCellType <- factor(dat_p$SubCellType, levels = sort_cell)
+  
+  
+  p_list[[pathway]] <- ggplot(dat_p, aes_string(x = "SubCellType",y = "score" ,fill = "SubCellType"))+
+    geom_boxplot(outliers = FALSE)+
+    scale_fill_manual(values=c(FLD_col))+ #颜色
+    guides(fill=FALSE) +
+    stat_summary(fun.data = mean_fun, geom = "text", size=3 , color="black") +
+    labs(title = pathway,
+         x = '',
+         y = "") +
+    theme_classic(base_line_size = 0.5)+
+    theme(plot.title = element_text(size = 10,colour = "black",hjust = 0.5),
+          legend.title = element_text(color="black", 
+                                      size=10, face="bold"),
+          legend.text = element_text(color="black", 
+                                     size = 10, face = "bold"),
+          axis.text.x = element_text(size = 10, 
+                                     color = "black", 
+                                     face = "bold", 
+                                     vjust = 1, 
+                                     hjust = 0.95, 
+                                     angle = 45), 
+          axis.text.y = element_text(size = 10,  color = "black",face = "bold", vjust = 0.5, 
+                                     hjust = 0.5, angle = 0))}
+wrap_plots(p_list, ncol = 1)
+save_plot(wrap_plots(p_list, ncol = 1),"/data02/huzhiyang_03/FLD/result/01.CD8T比例变化/Cytotoxicity/CD8T_cytotoxicity_order", if_pdf = T, width = 4,height = 4)
+
+##Fig.5I####
+CD8T <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/合并scsn/CD8T.rds")
+data <- CD8T
+unique(data@meta.data$SubCellType)
+data@meta.data$Minor_celltype <- data@meta.data$SubCellType
+unique(data@meta.data$time)
+data_sub <- subset(data,  time %in% c("24w"))
+unique(data_sub@meta.data$time)
+DimPlot(data_sub, reduction = "umap", label = T, group.by = "Minor_celltype")
+
+
+cols2 <- c("#FFCCBC", "#E1EFFF", "#E1BEE7", "#81D4FA","#FFC98B",  "#A5D6A7","#B2DFDB","#FFE0B2")
+
+expr_mtx <- GetAssayData(data_sub, assay = 'RNA', slot = 'counts')
+cell_metadata <- data_sub@meta.data
+gene_annotation <- data.frame(gene_short_name = rownames(data_sub))
+rownames(gene_annotation) <- rownames(data_sub)
+
+cds <- new_cell_data_set(expr_mtx, 
+                         cell_metadata = cell_metadata[colnames(expr_mtx),], 
+                         gene_metadata = gene_annotation)
+
+
+cds <- preprocess_cds(cds, num_dim = 15)
+plot_pc_variance_explained(cds)
+
+cds <- reduce_dimension(cds, preprocess_method = "PCA")
+plot_cells(cds, label_groups_by_cluster=FALSE,  color_cells_by = "Minor_celltype", group_label_size = 5)
+
+
+cds.embed <- cds@int_colData$reducedDims$UMAP  
+int.embed <- Embeddings(data_sub, reduction = "umap")  
+int.embed <- int.embed[rownames(cds.embed), ]  
+cds@int_colData$reducedDims$UMAP <- int.embed  
+plot_cells(cds, reduction_method="UMAP", color_cells_by="Minor_celltype",group_label_size = 5) + ggtitle('int.umap')
+
+cds <- cluster_cells(cds)
+plot_cells(cds, color_cells_by = "partition")
+cds <- learn_graph(cds,
+                   learn_graph_control = list(prune_graph = T,
+                                              minimal_branch_len=6,#在图修剪过程中要保留的分支直径路径的最小长度。默认值是10。
+                                              euclidean_distance_ratio=0.1#生成树中两个末端节点的欧氏距离与生成树上允许连接的任何连接点之间的最大距离之比。默认值为1。
+                                              
+                   ))
+plot_cells(cds,
+           color_cells_by = "Minor_celltype",
+           label_groups_by_cluster=FALSE,
+           label_leaves=T,
+           label_branch_points=FALSE,
+           group_label_size = 5)
+
+get_earliest_principal_node <- function(cds, time_bin="CD8_Tn"){
+  cell_ids <- which(colData(cds)[, "Minor_celltype"] == time_bin)
+  
+  closest_vertex <-
+    cds@principal_graph_aux[["UMAP"]]$pr_graph_cell_proj_closest_vertex
+  closest_vertex <- as.matrix(closest_vertex[colnames(cds), ])
+  root_pr_nodes <-
+    igraph::V(principal_graph(cds)[["UMAP"]])$name[as.numeric(names
+                                                              (which.max(table(closest_vertex[cell_ids,]))))]
+  
+  root_pr_nodes
+}
+cds <- order_cells(cds, root_pr_nodes=get_earliest_principal_node(cds))
+
+plot_cells(cds,
+           color_cells_by = "pseudotime",
+           # group_cells_by = "Minor_celltype",
+           label_cell_groups=F,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           label_roots =F,
+           graph_label_size=3,
+           cell_size=1,
+           trajectory_graph_color='black',
+           trajectory_graph_segment_size = 1)
+
+
+##Fig.5J####
+load("/data02/liuxiaofei/FLD/2025.6.6_new_sample/2025.8.6_analysis_inuse/CD8_TCR1.RData")
+CD8_TCR1 <- CD8_TCR1[, !is.na(CD8_TCR1$CTnt) & !grepl("NA", CD8_TCR1$CTnt, fixed = TRUE)]
+CD8T <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/合并scsn/CD8T.rds")
+CD8T <- subset(CD8T, time %in% c("24w"))
+CD8T <- subset(CD8T, SubCellType != c("CD8_T_cycling"))
+
+CD8T@meta.data$SubCellType <- as.character(CD8T@meta.data$SubCellType)
+
+CD8T@meta.data$barcode <- rownames(CD8T@meta.data)
+CD8T@meta.data$new_anno <-CD8T@meta.data$SubCellType
+barcode_Tex <- colnames(CD8T)
+intersect <- intersect(colnames(CD8_TCR1),barcode_Tex)
+intersect <- unique(intersect)
+
+CD8_TCR1$barcode <- colnames(CD8_TCR1)
+Tex_intersect <- subset(CD8T, barcode %in% intersect) #cellid barcode
+TCR_intersect <- subset(CD8_TCR1, barcode %in% intersect)
+TCR_intersect$new_anno <- NULL
+meta <- TCR_intersect@meta.data
+
+meta_Tex <- Tex_intersect@meta.data[,c("barcode","new_anno")] 
+meta <- left_join(meta, meta_Tex)
+
+table(meta$cloneType,meta$new_anno)
+
+cell.prop_T <-as.data.frame(table(meta$new_anno,meta$cloneType), margin = 2)
+colnames(cell.prop_T)<-c("subtype","TCR_expand","proportion")
+unique(cell.prop_T$subtype)
+cell.prop_T$subtype=factor(cell.prop_T$subtype,levels = c("CD8_Tn", "CD8_Trm", "CD8_Tcm", "CD8_Tem", "CD8_Tex-like", "CD8_Tex", "CD8_T_cycling"))
+cell.prop_T$TCR_expand=factor(cell.prop_T$TCR_expand,levels = c("Single (0 < X <= 1)","Small (1 < X <= 5)",
+                                                                "Medium (5 < X <= 20)","Large (20 < X <= 100)",
+                                                                "Hyperexpanded (100 < X <= 500)"))
+
+p1 <- ggplot(cell.prop_T,aes(subtype,proportion,fill=TCR_expand))+
+  # coord_flip()+
+  geom_bar(stat = "identity",position="fill")+
+  ggtitle("")+
+  labs(title = "",
+       x = "",
+       y = "Proportion") +
+  theme_bw()+
+  scale_color_manual(values = FLD_col)+
+  scale_fill_manual(values = FLD_col) +
+  theme(axis.ticks.length=unit(0.5,'cm'),axis.text.x=element_text(hjust = 1,vjust=1,angle = 30))+
+  guides(fill=guide_legend(title=NULL))
+p1
+save_plot(p1,"/data02/huzhiyang_03/FLD/result/01.CD8T比例变化/Cytotoxicity/barplot_CD8T_expand_24w",if_pdf = T,width = 6.5,height = 5)
+
+
+##Fig.5K####
+T_ann <- read.table("/data02/huzhiyang_03/FLD/result/28.ST/T细胞亚类注释/T_cell.txt",header = T)
+merge_ST <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/ST/RDS_大类/merged_rds.rds")
+
+obj_ST <- subset(merge_ST, sample == "FLD24")
+obj_ST@meta.data <- left_join(obj_ST@meta.data, T_ann, by = "BinID")
+obj_ST@meta.data$subtype <- ifelse(is.na(obj_ST@meta.data$subtype), obj_ST@meta.data$celltype, obj_ST@meta.data$subtype)
+
+remaining_types <- c("B_cell","Cholangiocyte","Endothelial","Hepatocyte","HSC","Myeloid")
+specified_types <- c("CD8T")
+
+results_list <- vector("list", length(specified_types))
+names(results_list) <- specified_types
+
+all_cell_coords <- obj_ST@meta.data[, c("row", "col")]
+all_cell_types <- obj_ST@meta.data$subtype
+
+for (spec_type in specified_types) {
+  print(spec_type)
+  
+  specified_cells <- which(all_cell_types == spec_type)
+  specified_names <- rownames(obj_ST@meta.data)[specified_cells]
+  specified_coords <- all_cell_coords[specified_cells, ]
+
+  type_results <- vector("list", length(remaining_types))
+  
+  for (j in seq_along(remaining_types)) {
+    remain_type <- remaining_types[j]
+    remaining_cells <- which(all_cell_types == remain_type)
+    
+    if (length(specified_cells) > 0 && length(remaining_cells) > 0) {
+      remaining_coords <- all_cell_coords[remaining_cells, ]
+
+      min_dists <- sapply(1:nrow(specified_coords), function(i) {
+        min(sqrt((specified_coords[i, 1] - remaining_coords[, 1])^2 +   ##平均 或 最小距离
+                   (specified_coords[i, 2] - remaining_coords[, 2])^2))
+      })
+      
+      type_results[[j]] <- data.frame(
+        cell = specified_names,
+        min_distance = min_dists,
+        source_type = spec_type,
+        target_type = remain_type
+      )
+    }
+  }
+  
+  results_list[[spec_type]] <- do.call(rbind, type_results)
+}
+
+final_result_df <- do.call(rbind, results_list)
+write.csv(final_result_df,glue("/data02/huzhiyang_03/FLD/result/28.ST/Tcell_distance/df_min_distance/FLD24_from_CD8T_mindistance.csv"))
+
+
+df_sample_dis <- read.csv("/data02/huzhiyang_03/FLD/result/28.ST/Tcell_distance/df_min_distance/FLD24_from_CD8T_mindistance.csv",header = T,row.names = 1)
+df_sample_dis %>% group_by(target_type) %>%  #source_type
+  summarise( mean_dis = mean(min_distance))
+df_mean <- df_sample_dis %>% group_by(target_type) %>% 
+  summarise( mean_dis = mean(min_distance)) %>% as.data.frame()
+df_mean
+
+
+df_mean$distance <- 1/df_mean$mean_dis
+sortcell <- arrange(df_mean, desc(distance)) %>% pull(target_type)
+df_mean$target_type <-factor(df_mean$target_type, levels = sortcell) 
+p2 <- ggplot(df_mean,aes(x = target_type, y = distance, fill = target_type))+
+  geom_col(aes(fill=target_type))+
+  scale_fill_manual(values=FLD_col)+
+  labs(title = 'min distance from CD8T',
+       x = '',
+       y = '1 / min distance' ) +
+  theme_bw()+
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        axis.title = element_text(size=10),title = element_text(size=10),
+        axis.title.y = element_text(size = 8, color = "black",face = "bold", vjust = 1.9, hjust = 0.5, angle = 90),
+        axis.title.x = element_text(size = 8, color = "black",face = "bold", vjust = 1.9, hjust = 0.5, angle = 0),
+        axis.text.y = element_text(size = 8,color = "black",face = "plain",angle = 0),
+        axis.text.x = element_text(size = 6,color = "black",face = "plain",angle = 45, hjust = 1)
+  )
+p2
+
+
+##Fig.5L####
+df_list <- list()
+for (cur_sample in c("ND","FLD8","FLD24")) {
+  df_sample_dis <- read.csv(glue("/data02/huzhiyang_03/FLD/result/28.ST/Tcell_distance/df_min_distance/{cur_sample}_to_CD8T_mindistance.csv"),header = T,row.names = 1)
+  df_list[[cur_sample]] <- df_sample_dis %>% filter(source_type == "Hepatocyte") %>% mutate(sample = cur_sample)
+}
+df_merge <- bind_rows(df_list)
+
+p1 <- ggplot(df_merge, aes(x = min_distance, fill = sample)) +
+  geom_density(adjust = 5,aes(color = sample),alpha = 0.5,size = 0)+
+  scale_fill_manual(values = FLD_col) + 
+  scale_color_manual(values = FLD_col) + 
+  theme(
+    plot.title    = element_text(color = 'black', size   = 20, hjust = 0.5),
+    plot.subtitle = element_text(color = 'black', size   = 16,hjust = 0.5),
+    plot.caption  = element_text(color = 'black', size   = 16,face = 'italic', hjust = 1),
+    axis.text.x   = element_text(color = 'black', size = 10, angle = 40,hjust = 1),
+    axis.text.y   = element_text(color = 'black', size = 10, angle = 0),
+    axis.title.x  = element_text(color = 'black', size = 13, angle = 0),
+    axis.title.y  = element_text(color = 'black', size = 13, angle = 90),
+    legend.title  = element_text(color = 'black', size  = 8),
+    legend.text   = element_text(color = 'black', size   = 8),
+    axis.line.y = element_line(color = 'black', linetype = 'solid'), # y轴线特征
+    axis.line.x = element_line (color = 'black',linetype = 'solid'), # x轴线特征
+    panel.background=element_rect(fill="white"),
+    strip.background = element_blank(),
+    strip.text.x=element_text(angle = 45, size = 10)
+  ) 
+p1
+
+##Fig.5M####
+obj_merged <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/合并scsn/merged_allcell_harmony.rds")
+obj_merged@meta.data$SubCellType <- ifelse(obj_merged@meta.data$SubCellType %in%
+                                             c("Hepa_C0","Hepa_C1","Hepa_C10","Hepa_C11","Hepa_C12","Hepa_C13","Hepa_C2",
+                                               "Hepa_C3","Hepa_C4","Hepa_C5","Hepa_C6","Hepa_C7","Hepa_C8","Hepa_C9"),
+                                           "Hepatocyte",obj_merged@meta.data$SubCellType)
+
+cur_level = "SubCellType" #MajorCellType,Cellgroup,SubCellType
+cur_time = "16w"
+obj <- subset(obj_merged, time %in% cur_time)
+obj@meta.data$samples = obj@meta.data$orig.ident
+cellchat = createCellChat(object = obj, meta =obj@meta.data, group.by = cur_level)  ###metadata需要有【samples】 和 细胞类型 这两列
+print("subject start")
+cellchat@DB = CellChatDB.mouse
+cellchat = subsetData(cellchat) %>%
+  identifyOverExpressedGenes() %>%
+  identifyOverExpressedInteractions() %>%
+  smoothData(adj = PPI.mouse)
+
+cellchat = computeCommunProb(cellchat, raw.use = TRUE, trim = 0,population.size = TRUE, type = "truncatedMean") %>%
+  filterCommunication(min.cells = 10)
+
+df.net = subsetCommunication(cellchat)
+write.csv(df.net, glue("/data02/huzhiyang_03/FLD/result/06.细胞互作分析/合并测序/SubCellType/df_net_{cur_time}_cohep.csv"))
+
+cellchat = computeCommunProbPathway(cellchat) %>% 
+  aggregateNet()
+
+saveRDS(cellchat, glue("/data02/huzhiyang_03/FLD/result/06.细胞互作分析/合并测序/SubCellType/cellchat_{cur_time}_cohep.rds"))
+
+#### 合并cellchat对象
+select_col <- c("SubCellType") #"SubCellType" "Cellgroup"MajorCellType
+comparisons <- combn(c("16w","24w"), 2, simplify = F)
+
+
+for (i in 1:length(comparisons)) {
+  select_group <- comparisons[[i]]
+  group_1 <- select_group[1]
+  group_2 <- select_group[2]
+  for (cur_col in select_col) {
+    out_dir <- glue("/data02/huzhiyang_03/FLD/result/06.细胞互作分析/合并测序/{group_2}")
+    cco_1 <- readRDS(glue("/data02/huzhiyang_03/FLD/result/06.细胞互作分析/合并测序/{select_col}/cellchat_{group_1}_cohep.rds"))
+    cco_2 <- readRDS(glue("/data02/huzhiyang_03/FLD/result/06.细胞互作分析/合并测序/{select_col}/cellchat_{group_2}_cohep.rds"))
+    cat("The cell identities in single cell interaction", group_1, ":", levels(cco_1@idents), "\n\n")
+    cat("The cell identities in single cell interaction", group_2, ":", levels(cco_2@idents), "\n\n")
+    
+    common_celltypes <- intersect(levels(cco_1@idents), levels(cco_2@idents))
+    cco_1_aligned <- subsetCellChat(cco_1, idents.use = common_celltypes)
+    cco_2_aligned <- subsetCellChat(cco_2, idents.use = common_celltypes)
+    
+    cco.list <- list(cco_1_aligned, cco_2_aligned)
+    names(cco.list) <- select_group
+    
+    cellchat <- CellChat::mergeCellChat(cco.list, add.names = names(cco.list), merge.data = TRUE)
+    
+    saveRDS(cellchat, glue("{out_dir}/Merged_cellchat_{group_1}_{group_2}_{cur_col}_cohep.rds"))
+    save(cco.list, cellchat, file = glue("{out_dir}/Merged_cellchat_{group_1}_{group_2}_{cur_col}_cohep.Rdata"))
+  }
+}
+
+cur_level = "SubCellType"
+cellchat1 <- readRDS("/data02/huzhiyang_03/FLD/result/06.细胞互作分析/合并测序/24w/Merged_cellchat_16w_24w_SubCellType_cohep.rds")
+cellchat <- cellchat1
+
+all_interactions <- cellchat@LR$`24w`$LRsig$interaction_name
+LR_filter <- data.frame("interaction_name" = c("FASL_FAS","GZMA_F2R","GZMA_F2RL1","GZMA_F2RL2","GZMA_PARD3"))
+
+pdf(glue("/data02/huzhiyang_03/FLD/result/06.细胞互作分析/合并测序/24w/bubble_{cur_level}_CD8tohep_filter.pdf"), width = 5, height = 6)
+netVisual_bubble(cellchat, 
+                 sources.use = c("CD8_Tex"),
+                 targets.use = c("Hepatocyte"),
+                 remove.isolate = T,
+                 comparison = c(1,2),
+                 thresh = 0.01,
+                 vjust.x = 1,
+                 hjust.x = 1,
+                 pairLR.use = LR_filter,
+                 max.dataset = 2,
+                 angle.x = 15)
+dev.off()
+
+##Fig.5N####
+hep <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Hepatocyte_16.rds")
+
+final_df <- data.frame()
+for (gene in  c("Fas","F2r","F2rl1","F2rl2","Pard3")) {
+  gene_data <- hep %>% 
+    FetchData( vars = c(gene, "time")) %>% setnames(c(1,2), c("exp","group")) %>%    #####修改细胞类型的变量
+    dplyr::select(exp, group)
+  
+  df <- gene_data %>% group_by(group) %>% summarise(pct = PercentAbove(exp, threshold = 0), exp = mean(exp)) %>% 
+    unique() %>% mutate(genename = gene)
+  final_df <- rbind(final_df,df)
+}
+
+final_df <- final_df %>%  filter(group != "36w") %>% group_by(genename) %>% mutate(scaled_exp =scale(exp)[,1]) %>% ungroup()
+
+###选择时间
+final_df$group <- factor(final_df$group,
+                         levels= c("0w","4w","8w","16w","24w"))
+
+final_df$genename <- factor(final_df$genename, levels = c("Fas","F2r","F2rl1","F2rl2","Pard3"))
+p <- ggplot(final_df, aes(x = group, y = genename, color = scaled_exp, size = pct)) +
+  geom_point() + 
+  # geom_text(aes(label = a), vjust = -1,)+
+  # theme_minimal()+
+  labs(title = glue("Hepatocyte"),
+       x = "", y = "") +
+  # facet_wrap(celltype~ ., nrow = 1)+
+  scale_color_gradient2(low="#005fbf",mid="white",high="#bf0000",midpoint = 1) +
+  # scale_color_gradientn(colours = viridis::viridis(256)) +  # 根据表达量变化调色
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1,color = "black"),
+        axis.text.y = element_text(color = "black"),
+        panel.grid.minor = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_blank())
