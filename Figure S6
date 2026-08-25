@@ -1,0 +1,48 @@
+##Fig.S6A####
+KC <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Kupffer_16_harmony.rds")
+obj <- subset(KC, time %in% c("16w"))
+p <- FeaturePlot(obj, features = c("Gpnmb","Trem2","Lpl","Cd36","Cd9"),
+                 ncol = 3, cols = c("light grey", "red"))
+##Fig.S6B####
+KC <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Kupffer_16_harmony.rds")
+obj <- subset(KC, time %in% c("16w"))
+BDMC <- subset(obj, subtype_new %in% c("Macrophage","mono_KC","Monocyte"))
+
+val_list <- c("Gpnmb","Trem2",
+              "Lpl","Cd36",
+              "Cd9"
+)
+
+BDMC@meta.data$subtype_new2 <- factor(BDMC@meta.data$subtype_new2, levels = c("Monocyte","Mac1","Mac2","Mac3","moKC1","moKC2"))
+Dotfeatures1 <- DotPlot(BDMC, features = val_list, group.by = 'subtype_new2', cols = 'Spectral') + coord_flip() +
+  scale_color_gradient2(low="#005fbf",mid="white",high="#bf0000") + #low="#005fbf",mid="white",high="#bf0000"
+  geom_point(aes(size = pct.exp), shape = 21, colour = "black", stroke = 0.5) +
+  guides(size = guide_legend(override.aes = list(shape = 21, colour = "black", fill = "white"))) +
+  scale_size(breaks = c(0, 25, 50, 75)) +
+  scale_size(breaks = c(0, 25, 50, 75)) +
+  theme(
+    panel.background = element_rect(fill = "white"),  # 主面板背景
+    plot.background = element_rect(fill = "white"),   # 整个绘图区背景
+    panel.grid = element_blank()                      # 移除网格线
+  ) +
+  theme(
+    plot.title    = element_text(color = 'black', size   = 20, hjust = 0.5),
+    plot.subtitle = element_text(color = 'black', size   = 16,hjust = 0.5),
+    plot.caption  = element_text(color = 'black', size   = 16,face = 'italic', hjust = 1),
+    axis.text.x   = element_text(color = 'black', size = 8, angle = 45,hjust = 1),
+    axis.text.y   = element_text(color = 'black', size = 8, angle = 0),
+    axis.title.x  = element_text(color = 'black', size = 8, angle = 0),
+    axis.title.y  = element_text(color = 'black', size = 8, angle = 90),
+    legend.title=element_text(size = 8),
+    legend.text   = element_text(color = 'black', size   = 8),
+    axis.line.y = element_line(color = 'black', linetype = 'solid'), # y轴线特征
+    axis.line.x = element_line (color = 'black',linetype = 'solid'), # x轴线特征
+    panel.background=element_rect(fill="white"),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5),
+    strip.text = element_text(size = 8)
+  ) +
+  RotatedAxis() +
+  labs(x = "", y = "", color = "Average Expression", size = "Percent Expression") +
+  guides(size=guide_legend(override.aes=list(shape=21, colour="black", fill="white")))
+
+Dotfeatures1
