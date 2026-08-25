@@ -1,0 +1,308 @@
+##Fig.S4A####
+gl_syn <- read.gmt("/data02/huzhiyang_03/FLD/result/09.核测序/脂肪酸代谢/FA_catabiosis.gmt")
+gl_syn <- read.gmt("/data02/huzhiyang_03/FLD/result/09.核测序/脂肪酸代谢/FA_biosynthesis.gmt")
+
+gl_syn <- gl_syn %>% filter(nchar(gene) > 0)
+gl_1 <- unique(gl_syn$term) %>%
+  map(~ gl_syn %>% filter(term == .x) %>% pull(gene) %>% unique()) %>%
+  setNames(unique(gl_syn$term))
+
+hep <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Hepatocyte_16.rds")
+
+hep_filter <- subset(hep, Liver_zone %in% c("CV","PV") & time %in% c("0w","4w","8w"))
+obj <- AddModuleScore(hep_filter, features=gl_1, name = "") #AddModuleScore_Ucell
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+
+p_list <- list()
+for (pathway in names(gl_1)) {
+  dat_p <- obj@meta.data %>%
+    dplyr::select(c(group = Liver_zone, score = pathway, time))
+  dat_p$time <- factor(dat_p$time,levels = c("0w","4w","8w"))
+  p_list[[pathway]] <- ggplot(dat_p, aes_string(x = "group",y = "score" ,fill = "time"))+
+    geom_boxplot(position = position_dodge(0.8), width = 0.7, outlier.shape = NA)+
+    stat_compare_means(
+      aes(group = time), 
+      method = "wilcox.test", 
+      label = "p.signif",         
+      label.y = mean(dat_p$score) * 1.5, 
+      size = 4                    
+    ) +
+    scale_fill_manual(values = c("#FFCCBC", "#E1EFFF","#FFE0B2"))+
+    scale_color_manual(values = c("#FFCCBC", "#E1EFFF","#FFE0B2"))+
+    theme(
+      plot.title    = element_text(color = 'black', size   = 10, hjust = 0.5,face = "bold"),
+      axis.text.x   = element_text(color = 'black', size = 8, angle = 0,hjust = 0.5,face = "bold"),#
+      axis.text.y   = element_text(color = 'black', size = 8, angle = 0),
+      axis.title.x  = element_text(color = 'black', size = 10, angle = 0),
+      axis.title.y  = element_text(color = 'black', size = 10, angle = 90),
+      panel.background=element_rect(fill="white"), 
+      panel.border = element_rect(linetype = 'solid', size = 0.5,fill = NA) 
+    )+
+    labs(title = pathway,
+         x = "Region",
+         y = "Score",
+         fill = "Time",   
+         color = "Time"
+    )
+}
+wrap_plots(p_list, ncol = 2)
+
+
+##Fig.S4B####
+sn_liver <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/allcell_0826.rds")
+
+sn_liver@meta.data <- sn_liver@meta.data %>% mutate(Cellgroup = case_when(
+  subtype_new %in% c("Mac1","Mac2","Mac3") ~ "Macrophage",
+  subtype_new %in% c("moKC1","moKC2") ~ "monoKC",
+  subtype_new %in% c("Resident_KC","Cellcycle_KC") ~ "Resident_KC",
+  subtype_new %in% c("Monocyte") ~ "Monocyte",
+  subtype_new %in% c("Plasma") ~ "Plasma",
+  subtype_new %in% c("CD4T") ~ "CD4T",
+  subtype_new %in% c("CD8_Cycling","CD8_Naive","CD8_Tcm", "CD8_Temra_Tem","CD8_Tex","gDT") ~ "CD8T",
+  T ~ celltype
+))
+
+
+
+obj <- subset(sn_liver, time %in%  c("8w"))
+obj@meta.data$samples = obj@meta.data$orig.ident
+cellchat = createCellChat(object = obj, meta =obj@meta.data, group.by = "Cellgroup")  ###metadata需要有【samples】 和 细胞类型 这两列
+print("subject start")
+cellchat@DB = CellChatDB.mouse
+cellchat = subsetData(cellchat) %>%
+  identifyOverExpressedGenes() %>%
+  identifyOverExpressedInteractions() %>%
+  smoothData(adj = PPI.mouse)
+cellchat = computeCommunProb(cellchat, raw.use = TRUE, trim = 0,population.size = TRUE, type = "truncatedMean") %>%
+  filterCommunication(min.cells = 10)
+df.net = subsetCommunication(cellchat)
+write.csv(df.net, "/data02/huzhiyang_03/FLD/result/06.细胞互作分析/核测序new/Cellgroup/df_net_8w_mye.csv")
+cellchat = computeCommunProbPathway(cellchat) %>% 
+  aggregateNet()
+saveRDS(cellchat, "/data02/huzhiyang_03/FLD/result/06.细胞互作分析/核测序new/MajorCellType/cellchat_8w_mye.rds")
+
+mat_total <- apply(cellchat@net$`8w`$prob, c(1,2), sum)
+rows_keep <- c("Hepatocyte")                
+cols_keep <- c("Resident_KC","Macrophage", "Monocyte", "monoKC")   
+all_nodes <- sort(unique(c(rows_keep, cols_keep)))
+square_mat <- matrix(0, nrow = length(all_nodes), ncol = length(all_nodes),
+                     dimnames = list(all_nodes, all_nodes))
+row_idx <- match(rows_keep, all_nodes)
+col_idx <- match(cols_keep, all_nodes)
+square_mat[row_idx, col_idx] <- mat_total[rows_keep, cols_keep, drop = FALSE]
+groupSize_square <- groupSize[all_nodes]
+pdf(glue("/data02/huzhiyang_03/FLD/result/06.细胞互作分析/核测序new/Cellgroup/8w/circleweight_Cellgroup_8w_hep2Mye_filter.pdf"), width = 6, height = 8)
+netVisual_circle(square_mat,
+                 vertex.weight = groupSize_square,
+                 weight.scale = TRUE,
+                 label.edge = F,
+                 edge.weight.max = max(square_mat),
+                 edge.width.max = 12)
+dev.off()
+
+##Fig.S4C####
+gl_syn <- read.gmt(glue("/data02/huzhiyang_03/FLD/result/geneset/Chemokines.gmt"))
+gl_syn <- gl_syn %>% filter(nchar(gene) > 0)  
+gl_1 <- unique(gl_syn$term) %>%
+  map(~ gl_syn %>% filter(term == .x) %>% pull(gene) %>% unique()) %>%
+  setNames(unique(gl_syn$term))
+
+KC <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Kupffer_16_harmony.rds")
+KC <- subset(KC, subtype_new == "Resident_KC" & time %in% c("4w","8w"))
+obj <- AddModuleScore(KC, gl_1, name = "Cluster")
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+
+metadata <- obj@meta.data
+p_list <- list()
+for (pathway in names(gl_1)) {
+  dat_p <- metadata %>%
+    dplyr::select(c(group = time, score = pathway))
+  p_list[[pathway]] <- ggplot(dat_p, aes_string(x = "group",y = "score" ,fill = "group"))+
+    geom_boxplot(outliers = FALSE)+
+    scale_fill_manual(values=c("#FFCCBC", "#E1EFFF","#FFE0B2","#E1BEE7"))+ #颜色
+    guides(fill=FALSE) +
+    stat_summary(fun.data = mean_fun, geom = "text", size=3 , color="black") +
+    labs(title = pathway,
+         x = '',
+         y = "") +
+    theme_classic(base_line_size = 0.5)+
+    theme(plot.title = element_text(size = 10,colour = "black",hjust = 0.5),
+          axis.title.y = element_text(size = 12, color = "black",face = "plain", vjust = 1.9, hjust = 0.5, angle = 90),
+          legend.title = element_text(color="black", 
+                                      size=10, face="plain"),
+          legend.text = element_text(color="black", 
+                                     size = 10, face = "plain"),
+          axis.text.x = element_text(size = 10, 
+                                     color = "black", 
+                                     face = "plain", 
+                                     vjust = 0.5,
+                                     hjust = 0.5, 
+                                     angle = 0), 
+          axis.text.y = element_text(size = 10,  color = "black",face = "plain", vjust = 0.5, 
+                                     hjust = 0.5, angle = 0)) +
+    stat_compare_means(comparisons=list(c("CV","PV")), label="p.format",method = 'wilcox.test', tip.length = 0,#label.y = 0.01,#p.format 
+                       symnum.args=list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1),
+                                        symbols = c("****", "***", "**", "*", "ns"))
+    )
+}
+wrap_plots(p_list,ncol = 1)
+
+
+##Fig.S4D####
+KC <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Kupffer_16_harmony.rds")
+obj <- subset(KC, time %in% c("0w","4w","8w"))
+result_path = "/data02/huzhiyang_03/FLD/result/10.巨噬细胞/轨迹分析/048"
+data <- GetAssayData(obj, assay = 'RNA', slot = 'count')
+cell_metadata <- obj@meta.data
+gene_annotation <- data.frame(gene_short_name = rownames(data))
+rownames(gene_annotation) <- rownames(data)
+cds <- new_cell_data_set(data,
+                         cell_metadata = cell_metadata,
+                         gene_metadata = gene_annotation)
+cds <- preprocess_cds(cds, num_dim = 15)
+
+cds <- reduce_dimension(cds)
+SingleCellExperiment::reducedDims(cds)[["UMAP"]]=obj@reductions[["umap"]]@cell.embeddings
+cds <- cluster_cells(cds)
+plot_cells(cds,color_cells_by = "partition")
+cds <- learn_graph(cds,
+                   learn_graph_control = list(prune_graph = T,
+                                              minimal_branch_len=3,#在图修剪过程中要保留的分支直径路径的最小长度。默认值是10。
+                                              euclidean_distance_ratio=3 #生成树中两个末端节点的欧氏距离与生成树上允许连接的任何连接点之间的最大距离之比。默认值为1。
+                   ))
+
+get_earliest_principal_node <- function(cds, time_bin=c('Monocyte')){
+  cell_ids <- which(colData(cds)[, "subtype"] == time_bin)
+  closest_vertex <- cds@principal_graph_aux[["UMAP"]]$pr_graph_cell_proj_closest_vertex
+  closest_vertex <- as.matrix(closest_vertex[colnames(cds), ])
+  root_pr_nodes <- igraph::V(principal_graph(cds)[["UMAP"]])$name[as.numeric(names(which.max(table(closest_vertex[cell_ids,]))))] # igraph::V()函数获取主成分图中的所有顶点信息
+  root_pr_nodes
+}
+cds <- order_cells(cds, root_pr_nodes=get_earliest_principal_node(cds))
+p3 <- plot_cells(cds,
+                 color_cells_by = "pseudotime",
+                 label_cell_groups=FALSE,
+                 label_leaves=FALSE,
+                 label_branch_points=FALSE,
+                 graph_label_size=1.5)
+p3
+
+##Fig.S4E####
+Mye_ann <- read.table("/data02/huzhiyang_03/FLD/result/28.ST/Myeloid亚类注释/Myeloid.txt",header = T)
+obj_ST <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/ST/RDS_大类/FLD8.rds")
+obj_ST@meta.data <- left_join(obj_ST@meta.data, Mye_ann, by = "BinID")
+obj_ST@meta.data$subtype <- ifelse(is.na(obj_ST@meta.data$subtype), obj_ST@meta.data$celltype, obj_ST@meta.data$subtype)
+rownames(obj_ST@meta.data) <- obj_ST@meta.data$bin
+
+table(obj_ST$Liver_zone)
+# CV   Mid    PV 
+# 9719 19438 14579 
+df <- obj_ST@meta.data %>% filter(subtype != "Hepatocyte")
+plot_data <- table(df$subtype, df$Liver_zone) %>% as.data.frame() %>% 
+  pivot_wider(id_cols = Var1, names_from = Var2, values_from = Freq) %>% 
+  column_to_rownames(var = "Var1")
+statistics= c(0.9719,1.9438,1.4579)
+
+for (i in 1:nrow(plot_data)){
+  plot_data[i,] = plot_data[i,]/statistics
+}
+plot_data <- rownames_to_column(plot_data, var = "celltype") %>% 
+  reshape2::melt(id = "celltype") 
+plot_data <- filter(plot_data,celltype %in% c("Monocyte","Macrophage","monoKC","Resident_KC") & variable != "Mid")
+p <- ggplot(plot_data, aes( x = variable, weight = value, fill = celltype))+
+  labs(title = '',
+       x = 'Region',
+       y = 'Number of cells per 10,000 spots' ) + #Proportion Cell number
+  scale_fill_manual(values = FLD_col)+
+  theme_bw()+
+  theme(panel.grid = element_blank(),
+        axis.title.y = element_text(size = 10, color = "black",face = "bold", vjust = 1.9, hjust = 0.5, angle = 90),
+        axis.title.x = element_text(size = 10, color = "black",face = "bold", vjust = 1.9, hjust = 0.5, angle = 0),
+  )+
+  panel_border(size = 2)+
+  geom_bar( position = "stack",width = 0.8)
+p
+
+
+##Fig.S4F####
+gl_syn <- read.gmt(glue("/data02/huzhiyang_03/FLD/result/geneset/Chemokines.gmt"))
+gl_syn <- gl_syn %>% filter(nchar(gene) > 0)   
+gl_1 <- unique(gl_syn$term) %>%
+  map(~ gl_syn %>% filter(term == .x) %>% pull(gene) %>% unique()) %>%
+  setNames(unique(gl_syn$term))
+
+obj_ST <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/ST/RDS_大类/FLD8.rds")
+obj <- AddModuleScore(obj_ST %>% subset(Liver_zone != "Mid"), gl_1, name = "Cluster")
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+
+metadata <- obj@meta.data
+p_list <- list()
+for (pathway in names(gl_1)) {
+  dat_p <- metadata %>%
+    dplyr::select(c(group = Liver_zone, score = pathway))
+  p_list[[pathway]] <- ggplot(dat_p, aes_string(x = "group",y = "score" ,fill = "group"))+
+    geom_boxplot(outliers = FALSE)+
+    scale_fill_manual(values=c("#FFCCBC", "#E1EFFF","#FFE0B2","#E1BEE7"))+ #颜色
+    guides(fill=FALSE) +
+    stat_summary(fun.data = mean_fun, geom = "text", size=3 , color="black") +
+    labs(title = pathway,
+         x = '',
+         y = "") +
+    theme_classic(base_line_size = 0.5)+
+    theme(plot.title = element_text(size = 10,colour = "black",hjust = 0.5),
+          axis.title.y = element_text(size = 12, color = "black",face = "plain", vjust = 1.9, hjust = 0.5, angle = 90),
+          legend.title = element_text(color="black", 
+                                      size=10, face="plain"),
+          legend.text = element_text(color="black", 
+                                     size = 10, face = "plain"),
+          axis.text.x = element_text(size = 10, 
+                                     color = "black", 
+                                     face = "plain", 
+                                     vjust = 0.5,
+                                     hjust = 0.5, 
+                                     angle = 0), 
+          axis.text.y = element_text(size = 10,  color = "black",face = "plain", vjust = 0.5, 
+                                     hjust = 0.5, angle = 0)) +
+    stat_compare_means(comparisons=list(c("CV","PV")), label="p.format",method = 'wilcox.test', tip.length = 0,#label.y = 0.01,#p.format 
+                       symnum.args=list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1),
+                                        symbols = c("****", "***", "**", "*", "ns"))
+    )
+}
+
+##Fig.S4G####
+obj <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/ST/RDS_大类/FLD8.rds")
+gene_data <- FetchData(obj, vars = c("Ccl6", "celltype", "Liver_zone")) %>% data.table::setnames(c(1,3),c("genename","Group"))
+gene_data1 <- gene_data %>% filter(Group %in% c("PV","CV"))
+gene_data1 <- filter(gene_data, celltype %in% c("Myeloid","B_cell","T_cell")) %>% filter(Group %in% c("PV","CV"))
+df_mean <- gene_data1 %>% 
+  group_by(Group) %>% summarise(mean_exp = mean(genename)) %>% as.data.frame()
+df_mean
+p <-  ggplot(gene_data1, aes(x =Group ,y = genename ,fill = Group))+
+  geom_bar(data = df_mean, aes(x = Group, y = mean_exp, fill = Group),stat = "identity", width = 0.6, alpha = 0.6)+
+  stat_summary(fun.data = "mean_se", geom = "errorbar", position = position_dodge(0.8), width = 0.2) +
+  scale_fill_manual(values=c("#FFCCBC", "#E1EFFF", "#FFE0B2"))+ 
+  scale_color_manual(values=c("#FFCCBC", "#E1EFFF", "#FFE0B2"))+
+  guides(fill=FALSE) +
+  labs(title = "Ccl6",
+       x = "",
+       y = "Expression Level") +
+  theme_classic(base_line_size = 0.5)+
+  cowplot::panel_border(size = 0.5,color = "black")+
+  theme(plot.title = element_text(size = 10,colour = "black",hjust = 0.5,face = "plain"),
+        legend.title = element_text(color="black", 
+                                    size=10, face="plain"),
+        legend.text = element_text(color="black", 
+                                   size = 10, face = "plain"),
+        axis.text.x = element_text(size = 10,  
+                                   color = "black",
+                                   face = "plain", 
+                                   vjust = 0.5,
+                                   hjust = 0.5, 
+                                   angle = 0), 
+        axis.text.y = element_text(size = 10,  color = "black",face = "plain", vjust = 0.5, 
+                                   hjust = 0.5, angle = 0)) +
+  stat_compare_means(comparisons=list(c("CV","PV")), label="p.format",method = 'wilcox.test', tip.length = 0,label.y = 0.01,#p.format 
+                     symnum.args=list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1),
+                                      symbols = c("****", "***", "**", "*", "ns"))
+  )
+p
