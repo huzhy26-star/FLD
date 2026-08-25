@@ -1,0 +1,279 @@
+##Fig.4A-B####
+bulk_df1 <- read.csv("~/fatty_liver_hzy/bulk_data/liver_bulk.csv",header = T,row.names = 1,check.names = F)
+df_group <- read.csv("~/fatty_liver_hzy/bulk_data/liver_bulk_group.csv",header = T,row.names = 1)
+df_group_816w <- filter(df_group, group %in% c("8w","16w") & samplename %in% bulk_sample)
+df_bulk_816w <- bulk_df1 %>% dplyr::select(df_group_816w$samplename)
+df_bulk_816w <- log(df_bulk_816w+1)
+#设置分组信息
+group_list <- factor(df_group_816w[,2],ordered = F)
+design <- model.matrix(~0+group_list)
+colnames(design) <- levels(group_list)
+rownames(design) <- colnames(df_bulk_816w)
+design
+#线性模型拟合
+fit <- lmFit(df_bulk_816w, design)
+#构建比较矩阵
+cont.matrix <- makeContrasts(contrasts = "G16w-G8w",levels = design)
+cont.matrix
+
+fit2 <- contrasts.fit(fit,cont.matrix) # 构建数据线性模型,计算估计的相关系数和标准差
+fit2 <- eBayes(fit2) # 贝叶斯检验
+tmpOut <- topTable(fit2,coef = 1,n = Inf,adjust.method = "BH",sort.by = "logFC") # 结果
+dif <- tmpOut[tmpOut$P.Value <= 0.05 & abs(tmpOut$logFC) > 0,]
+dim(dif)
+
+
+DEG <- tmpOut
+DEG$gene <- rownames(DEG)
+DEG1 <- bitr(geneID = DEG$gene, fromType = "SYMBOL", toType = "ENTREZID", 
+             OrgDb = org.Mm.eg.db, drop = F)
+colnames(DEG1)[1] <- "gene"
+DEG.rename <- merge(DEG, DEG1, by = "gene")
+
+cut_off_FC <- 0.25
+GO_up <- enrichGO(gene = DEG.rename[DEG.rename$logFC > cut_off_FC & DEG.rename$P.Value < 0.05,]$ENTREZID, 
+                  OrgDb = org.Mm.eg.db, keyType = "ENTREZID",
+                  ont = "BP", pvalueCutoff = 0.05, qvalueCutoff = 0.05, readable = T)
+GO_up_result <- GO_up@result[order(-GO_up@result$Count),]
+GO_up_result$label <- "up"
+pathway_up_selected <- c("double-strand break repair",
+                         "double-strand break repair via homologous recombination",
+                         "DNA replication",
+                         "response to oxidative stress",
+                         "intrinsic apoptotic signaling pathway",
+                         "regulation of apoptotic signaling pathway")
+GO_up_result <- GO_up_result[GO_up_result$Description %in% pathway_up_selected, ]
+
+GO_up_result$order <- factor(GO_up_result$Description, levels = rev(GO_up_result$Description))
+
+df_pathway <- GO_up_result
+
+GO_up_result$GeneRatioDraw <- lapply(df_pathway$GeneRatio, function(x){
+  g <- strsplit(x, "/")[[1]] %>% as.numeric()
+  g <- g[1]/g[2]
+  g <- round(g, 3)
+  return(g)
+}) %>% unlist()
+
+ggplot(GO_up_result, aes(x = GeneRatioDraw,
+                         y = reorder(Description, GeneRatioDraw)
+))+
+  geom_point(aes(size= Count, color = -log(qvalue)))+
+  guides(size=guide_legend(override.aes=list(shape=21, colour="black", fill="white"))) +
+  scale_color_gradientn(colours = viridis::viridis(256)) +
+  labs(
+    size="Gene counts",color="-log10(p-value)",x="Gene Ratio"
+  )+
+  theme_bw()+
+  theme(
+    axis.text.y = element_text(size = rel(1.5), color = "black"),
+    # axis.text.x = element_blank(),
+    axis.title.x = element_text(size= rel(1.5)),
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  )+
+  scale_size(range=c(5, 10))+
+  ggtitle("16w_vs_8w")
+ggsave("~/fatty_liver_hzy/16w//fig3a_enrichgo_16w_vs_8w_bubbleplot.pdf", height = 6, width = 9)
+
+
+scRNA_sub <- subset(scRNA, time %in% c("16w", "8w"))
+
+gl_syn <- read.gmt("/data02/huzhiyang_03/FLD/result/geneset/Apoptosis.gmt")
+gl_syn <- gl_syn %>% filter(nchar(gene) > 0)  
+gl_1 <- unique(gl_syn$term) %>%
+  map(~ gl_syn %>% filter(term == .x) %>% pull(gene) %>% unique()) %>%
+  setNames(unique(gl_syn$term))
+
+obj <- AddModuleScore(scRNA_sub, features=gl_1, name = "", ctrl = 1000) 
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+
+data_plot <- obj@meta.data %>%
+  group_by(time, celltype_new) %>%
+  summarise(mean_score = mean(.data[[names(gl_1)]]))
+data_wide <- pivot_wider(data_plot, names_from = "time", values_from = "mean_score")
+data_wide$logFC <- log2(data_wide$`16w`/data_wide$`8w`)
+
+plot_order <- data_wide %>%
+  group_by(celltype_new) %>%
+  arrange(-logFC)
+data_wide$celltype_new <- factor(data_wide$celltype_new, levels = plot_order$celltype_new)
+
+
+ggplot(data_wide,aes(x=celltype_new,y=logFC))+
+  geom_segment(aes(x=celltype_new,xend=celltype_new,y=0,yend=logFC),
+               size=1.5,color="#C9CACA",linetype="solid")+
+  geom_point(aes(fill = celltype_new), shape = 21,color = "black", stroke = 0.5, size = 8)+
+  geom_hline(yintercept = 0, linetype=2, color="grey")+
+  scale_fill_manual(values=c("#FFCCBC", "#E1EFFF", "#E1BEE7", "#81D4FA", "#FFC98B", 
+                             "#A5D6A7", "#B2DFDB", "#FFE0B2", "#E0E0DF","#FFF9C4", 
+                             "#F8BBD0"))+ 
+  theme_classic(base_line_size = 0.5)+
+  cowplot::panel_border(size = 0.5,color = "black")+
+  labs(title = names(gl_1)[3], 
+       x = "",
+       y = "log2FC (16w vs 8w)") +
+  theme(panel.grid.minor = element_blank(),legend.position = "none", 
+        axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 12))
+
+##Fig.4H####
+library(Seurat)
+library(tidyverse)
+library(patchwork)
+library(monocle3)
+
+set.seed(123456)
+data <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Kupffer_16_harmony.rds")
+unique(data@meta.data$subtype_new2)
+data@meta.data$Minor_celltype <- data@meta.data$subtype_new2
+unique(data@meta.data$time)
+data_sub <- subset(data,  time %in% c("16w", "8w"))
+unique(data_sub@meta.data$time)
+
+expr_mtx <- GetAssayData(data_sub, assay = 'RNA', slot = 'counts')
+cell_metadata <- data_sub@meta.data
+gene_annotation <- data.frame(gene_short_name = rownames(data_sub))
+rownames(gene_annotation) <- rownames(data_sub)
+
+cds <- new_cell_data_set(expr_mtx, 
+                         cell_metadata = cell_metadata[colnames(expr_mtx),], 
+                         gene_metadata = gene_annotation)
+cds <- preprocess_cds(cds, num_dim = 15)
+plot_pc_variance_explained(cds)
+
+cds <- reduce_dimension(cds, preprocess_method = "PCA")
+plot_cells(cds, label_groups_by_cluster=FALSE,  color_cells_by = "Minor_celltype", group_label_size = 5)
+
+cds.embed <- cds@int_colData$reducedDims$UMAP 
+int.embed <- Embeddings(data_sub, reduction = "umap") 
+int.embed <- int.embed[rownames(cds.embed), ] 
+cds@int_colData$reducedDims$UMAP <- int.embed 
+plot_cells(cds, reduction_method="UMAP", color_cells_by="Minor_celltype",group_label_size = 5) + ggtitle('int.umap')
+
+cds <- cluster_cells(cds,reduction_method = "UMAP",cluster_method = c("louvain"))
+plot_cells(cds, color_cells_by = "partition")
+cds <- learn_graph(cds,
+                   learn_graph_control = list(prune_graph = T,
+                                              # geodesic_distance_ratio = 0,
+                                              minimal_branch_len=10,
+                                              euclidean_distance_ratio=3
+                                              
+                   ))
+get_earliest_principal_node <- function(cds, time_bin=c('Monocyte')){
+  cell_ids <- which(colData(cds)[, "Minor_celltype"] == time_bin)
+  closest_vertex <- cds@principal_graph_aux[["UMAP"]]$pr_graph_cell_proj_closest_vertex
+  closest_vertex <- as.matrix(closest_vertex[colnames(cds), ])
+  root_pr_nodes <- igraph::V(principal_graph(cds)[["UMAP"]])$name[as.numeric(names(which.max(table(closest_vertex[cell_ids,]))))] # igraph::V()函数获取主成分图中的所有顶点信息
+  root_pr_nodes
+}
+cds <- order_cells(cds, root_pr_nodes=get_earliest_principal_node(cds))
+p3 <- plot_cells(cds,
+                 color_cells_by = "pseudotime",
+                 label_cell_groups=FALSE,
+                 label_leaves=FALSE,
+                 cell_size = 1,
+                 trajectory_graph_segment_size = 1,
+                 trajectory_graph_color = "black",
+                 label_branch_points=FALSE,
+                 graph_label_size=1.5)
+p3
+save_plot(p3, "/data02/huzhiyang_03/FLD/result/10.巨噬细胞/轨迹分析/Umap_816_10_3",if_pdf = T,width = 7,height =6)
+saveRDS(cds,"/data02/huzhiyang_03/FLD/result/10.巨噬细胞/轨迹分析/cds_816_10_3.rds")
+
+pseudotime <- pseudotime(cds) %>% as.data.frame()
+pseudotime$barcode <- rownames(pseudotime)
+colnames(pseudotime)[1] <- "pseudotime"
+
+data <- cds@colData@listData %>% as.data.frame()
+data$barcode <- rownames(data)
+data_merged <- merge(data, pseudotime, by = "barcode")
+data_merged <- data_merged[data_merged$pseudotime != Inf,]
+
+library(ggridges)
+unique(data_merged$subtype_new2)
+data_merged <- data_merged[data_merged$subtype_new %in% c("Macrophage", "Monocyte", "mono_KC"), ]
+data_merged$time <- factor(data_merged$time, levels = c("16w", "8w"))
+
+p3_pretty <- ggplot(data_merged, aes(x = pseudotime, y = time, fill = subtype_new2)) + 
+  geom_density_ridges(
+    aes(height = after_stat(count)), 
+    stat = "density",
+    adjust = 1.5, 
+    color = "white",        
+    linewidth = 0.4,        
+    scale = 0.95,           
+    alpha = 0.7,            
+    panel_scaling = TRUE
+  ) + 
+  scale_y_discrete(position = "left", expand = expansion(mult = c(0.01, 0.1))) + 
+  scale_x_continuous(position = "bottom", expand = c(0, 0)) + 
+  scale_fill_manual(values = FLD_col) +
+  theme_classic() +  
+  theme(
+    axis.line.y = element_line(color = "black", linewidth = 0.6),
+    axis.ticks.y = element_line(color = "black", linewidth = 0.5),
+    axis.ticks.length.y = unit(0.15, "cm"),
+    axis.line.x = element_line(color = "black", linewidth = 0.6),
+    axis.ticks.x = element_line(color = "black", linewidth = 0.5),
+    axis.text = element_text(colour = "black", size = 10, face = "plain"),
+    axis.title = element_text(colour = "black", size = 11, face = "plain"),
+    panel.grid = element_blank(),
+    panel.background = element_blank(),
+    legend.position = "right",
+    legend.title = element_text(face = "plain", size = 10),
+    legend.text = element_text(size = 9),
+    legend.key.size = unit(0.4, "cm")
+  ) +
+  labs(
+    x = "Pseudotime",
+    y = "",
+    fill = "Cell Subtype"
+  )
+
+##Fig.4K####
+gl_syn <- read.gmt(glue("/data02/huzhiyang_03/FLD/result/10.巨噬细胞/吞噬功能/吞噬通路.gmt"))
+gl_syn <- gl_syn %>% filter(nchar(gene) > 0)
+gl_1 <- unique(gl_syn$term) %>%
+  map(~ gl_syn %>% filter(term == .x) %>% pull(gene) %>% unique()) %>%
+  setNames(unique(gl_syn$term))
+
+data <- readRDS("/data02/huzhiyang_03/FLD/RDS_file/核测序/Kupffer_16_harmony.rds")
+scRNA_sub <- subset(data, time %in% c("16w"))
+
+obj <- AddModuleScore(scRNA_sub, features=gl_1, name = "", ctrl = 100) #AddModuleScore_UCell
+colnames(obj@meta.data)[(ncol(obj@meta.data)-length(gl_1)+1):ncol(obj@meta.data)] <- names(gl_1)
+names(gl_1)
+library(ggpubr)
+mean_fun <- function(x){
+  return(data.frame(y = max(x), label = round(mean(x),3)))
+}
+data_plot <- obj@meta.data
+unique(data_plot$subtype_new2)
+
+data_plot$celltype[data_plot$subtype_new2 %in% c("Mac3", "moKC2")] <- "MAC3_moKC2"
+data_plot$celltype[data_plot$subtype_new2 %in% c("Mac1", "Mac2", "moKC1", "Monocyte")] <- "other_BMDC"
+data_plot <- data_plot[data_plot$celltype %in% c("MAC3_moKC2", "other_BMDC"), ]
+data_plot$celltype <- factor(data_plot$celltype, levels = c("MAC3_moKC2", "other_BMDC"))
+
+plot_order <- data_plot %>%
+  group_by(subtype_new2) %>%
+  summarise(mean_score = mean(.data[[names(gl_1)[1]]])) %>%
+  arrange(-mean_score)
+data_plot$subtype_new2 <- factor(data_plot$subtype_new2, levels = plot_order$subtype_new2)
+ggplot(data_plot, aes(x = celltype,y = .data[[names(gl_1)[1]]] ,fill = celltype))+
+  geom_violin(width = 0.8)+
+  geom_boxplot(width=0.1, fill="white",outlier.shape = NA)+
+  stat_compare_means(comparisons =  list(c("MAC3_moKC2","other_BMDC")),
+                     method = 'wilcox.test',hide.ns = F,label = "p.format",size = 4)+
+  theme_classic()+
+  cowplot::panel_border(size = 0.5,color = "black")+
+  scale_fill_manual(values=c("#FFCCBC", "#E1EFFF", "#E1BEE7", "#81D4FA", "#FFC98B", 
+                             "#A5D6A7", "#B2DFDB", "#FFE0B2", "#E0E0DF","#FFF9C4", 
+                             "#F8BBD0"))+ 
+  labs(title = names(gl_1)[1], 
+       x = "",
+       y = "Score") +
+  theme(panel.grid.minor = element_blank(),legend.position = "none")+
+  stat_summary(fun.data = mean_fun, geom = "text", size=3 , color="black")
+ggsave("~/fatty_liver_hzy/16w/fig4_phagocytosis_score_of_myeloid1.pdf", height = 6, width = 4)
