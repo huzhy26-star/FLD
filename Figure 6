@@ -1,0 +1,445 @@
+##Fig.6L-M####
+####ND_36WvsWD_ND_8W
+fpkm_anno <- read_csv("fpkm.anno.csv")
+group <- read.csv("group_ND_36W_vsWD_ND_8W.csv",header = T,check.names = F)
+no_pro <- read.csv("excludeGene_mus.txt")
+fpkm_pro_coding <- fpkm_anno %>% filter(Biotype == 'protein_coding')
+
+fpkm_pro_coding <- select(fpkm_pro_coding,GeneName,A311:A606)
+
+#相同的基因取均值
+fpkm_final <- fpkm_pro_coding %>% group_by(GeneName) %>% summarise(
+  A311 = mean(A311, na.rm = TRUE),
+  A312 = mean(A312, na.rm = TRUE),
+  A313 = mean(A313, na.rm = TRUE),
+  A314 = mean(A314, na.rm = TRUE),
+  A315 = mean(A315, na.rm = TRUE),
+  A602 = mean(A602, na.rm = TRUE),
+  A603 = mean(A603, na.rm = TRUE),
+  A604 = mean(A604, na.rm = TRUE),
+  A605 = mean(A605, na.rm = TRUE),
+  A606 = mean(A606, na.rm = TRUE),
+  .groups = "drop"
+)
+
+fpkm_final <- fpkm_final %>%
+  column_to_rownames(var = "GeneName")
+exp_gene <- fpkm_final[setdiff(rownames(fpkm_final),no_pro[[1]]),]
+
+exp_gene <- log2(exp_gene+1)
+
+group_list <- factor(group[,2],ordered = F)
+design <- model.matrix(~0+group_list)
+colnames(design) <- levels(group_list)
+rownames(design) <- colnames(exp_gene)
+design
+#线性模型拟合
+fit <- lmFit(exp_gene,design)
+#构建比较矩阵
+cont.matrix <- makeContrasts(contrasts = "WD_ND_8W-ND_36W",levels = design)
+cont.matrix
+
+fit2 <- contrasts.fit(fit,cont.matrix) # 构建数据线性模型,计算估计的相关系数和标准差
+fit2 <- eBayes(fit2) # 贝叶斯检验
+tmpOut <- topTable(fit2,coef = 1,n = Inf,adjust.method = "BH",sort.by = "logFC") # 结果
+dif <- tmpOut[tmpOut$P.Value <= 0.05 & abs(tmpOut$logFC) > 0,]
+dim(dif)
+write.csv(tmpOut,file = "/data/home/liangzehang/diff_FLD_limma_log.csv")
+exp_gene <- fpkm_final[setdiff(rownames(fpkm_final),no_pro[[1]]),]
+# T为需要标准化， F为已经标准化的矩阵
+nor = T 
+exp = exp_gene
+meta = group
+genelist = NULL
+
+if (nor) {
+  # 过滤：至少在2个样本中表达值 > 1（阈值可根据数据调整）
+  keep <- rowSums(exp > 1) >= 2
+  exp_filtered <- exp[keep, , drop = FALSE]
+  cat("过滤后剩余基因数：", nrow(exp_filtered), "\n")
+  # log2转换（log2(x+1)）
+  exp <- log2(exp_filtered + 1)
+}
+if (is.null(genelist)) {
+  gene_number = round(nrow(exp) * 0.25) 
+  gene_var <- apply(exp, 1, var)
+  top_genes <- names(sort(gene_var, decreasing = TRUE))[1:gene_number]
+  logCPM_top <- exp[top_genes,]
+  exp_for_pca <- logCPM_top
+} else {
+  exp_for_pca = exp[which(rownames(exp) %in% genelist),]
+}
+
+# PCA：注意 t() 因为样本为列，要转为行为样本
+pca_res <- prcomp(t(exp_for_pca), scale. = F)
+library(ggplot2)
+# 构建数据框（前两主成分）
+pca_df <- as.data.frame(pca_res$x[, 1:2])
+colData = meta
+pca_df$Group <- colData$Group   # 分组列名改为 Group
+pca_df$Group = factor(pca_df$Group, levels = unique(pca_df$Group))
+# 绘图（含置信椭圆）
+color_vector <- c("#066190","#C42238","#4E79A7", "#F28E2B", "#E15759", 
+                  "#76B7B2", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7")
+pca_summary <- summary(pca_res)
+pc1_var <- round(pca_summary$importance[2, 1] * 100, 1)
+pc2_var <- round(pca_summary$importance[2, 2] * 100, 1)
+# 标准化 PC1 和 PC2
+pca_df$PC1_scaled <- scale(pca_df$PC1)
+pca_df$PC2_scaled <- scale(pca_df$PC2)
+# 标准化 PC1 和 PC2（冗余，保留原样）
+pca_df$PC1_scaled <- as.numeric(scale(pca_df$PC1))
+pca_df$PC2_scaled <- as.numeric(scale(pca_df$PC2))
+library(ggrepel)
+p1 = ggplot(pca_df, aes(x = PC1_scaled, y = PC2_scaled, color = Group)) +  # 改为 Group
+  
+  # 1️⃣ 点
+  geom_point(size = 4, alpha = 0.9) +
+  
+  # 2️⃣ label
+  geom_text_repel(
+    aes(label = rownames(pca_df)),
+    size = 3.5,
+    family = "",
+    max.overlaps = Inf,
+    box.padding = 0.4,
+    point.padding = 0.3,
+    segment.color = "grey50",
+    segment.size = 0.3,
+    min.segment.length = 0,
+    show.legend = FALSE
+  ) +
+  # 3️⃣ 置信椭圆
+  stat_ellipse(
+    level = 0.90,
+    linetype = "dashed",
+    linewidth = 0.8,
+    show.legend = FALSE
+  ) +
+  # 4️⃣ 颜色
+  scale_color_manual(values = color_vector) +
+  scale_fill_manual(values = color_vector) +
+  theme_light(base_size = 18) +
+  labs(
+    title = "Principal component analysis (PCA)",
+    x = paste0("PC1 (", pc1_var, "%)"),
+    y = paste0("PC2 (", pc2_var, "%)")
+  ) +
+  theme(
+    plot.title = element_text(
+      hjust = 0.5,
+      family = "",
+      face = "plain",
+      size = 20
+    ),
+    plot.background = element_blank(),
+    panel.grid = element_blank()
+  )
+print(p1)
+
+theme_cns <- function(base_size = 16){
+  theme_classic(base_size = base_size) %+replace%
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      axis.title = element_text(face = "bold"),
+      axis.text = element_text(color = "black"),
+      legend.title = element_blank(),
+      legend.position = "right"
+    )
+}
+p2 = p1 + theme_cns()
+print(p2)
+
+#permanova_analysis
+library(vegan)
+library(tidyverse)
+pc_data <- as.data.frame(pca_res$x)#提取pca分析所有pc轴
+Group <- c("ND_36W", "ND_36W", "ND_36W", "ND_36W", "ND_36W",
+           "WD_ND_8W","WD_ND_8W","WD_ND_8W","WD_ND_8W","WD_ND_8W")
+Group <- factor(Group)
+#计算距离矩阵
+# 在PC空间中，通常使用欧氏距离
+dist_matrix <- vegdist(pc_data, method = "euclidean")#用原始数据分析需将pc_data改为t(log2(exp_gene+1))
+#执行PERMANOVA（整体检验）
+set.seed(123)  # 设置随机种子，保证结果可重复
+permanova_result <- adonis2(dist_matrix ~ Group, permutations = 999)
+print(permanova_result)
+
+# 输出结果中的 Pr(>F) 即为P值，若 < 0.05 则说明组间有显著差异
+
+#检验多元离散度（PERMDISP）
+# 用于检查是否满足“多元齐性”假设，若显著则需谨慎解释PERMANOVA结果
+dispersal_result <- betadisper(dist_matrix, Group)
+permdisp_test <- permutest(dispersal_result, permutations = 999)
+print(permdisp_test)
+# 若 permdisp_test 的 P 值 < 0.05，说明组间离散度显著不同，PERMANOVA的显著可能由离散度差异引起
+
+# 可选：绘制箱线图查看离散度
+boxplot(dispersal_result)
+
+#提取P值
+p_value <- paste0("PERMANOVA P = ",permanova_result$`Pr(>F)`[1])
+p_disp_value <- paste0("PERMDISP P = ",permdisp_test$tab$`Pr(>F)`[1])
+#PCA图添加p值
+p2+annotate("text", x = Inf, y = Inf, 
+            label =  paste(p_value, p_disp_value, sep = "\n"), 
+            hjust = 1.1, vjust = 1.1, size = 5, 
+            color = "black", fontface = "bold")
+
+volcano1 <- VolcanoPlot(diff_FLD, log2FC = 1, padj = 0.05, 
+                        title = "ND_WD_8WVSND_36W", label.max = 20)
+
+
+##Fig.6N-O####
+liver_fpkm <- read_excel("liver_fpkm.xlsx")
+#数据预处理，筛选所需列，舍去表达均为0的基因，重复基因求均值
+fpkm <- liver_fpkm %>% 
+  select(Symbol,starts_with('G0w'),starts_with('G8w'))
+fpkm <- fpkm %>%
+  filter(!if_all(where(is.numeric), ~ .x == 0))
+#设置列名
+fpkm <- fpkm%>%
+  group_by(Symbol)%>%
+  summarise(
+    across(where(is.numeric), \(x) mean(x, na.rm = TRUE)),
+    .groups = "drop"
+  )%>%
+  column_to_rownames(var = "Symbol")
+#分组信息
+group <- data.frame(
+  samplename = c("G0w-A629", "G0w-A631", "G0w-A632", "G0w-A637", "G8w-A301", "G8w-A305", "G8w-A307", "G8w-A309"),
+  Group  = c("G0w", "G0w", "G0w", "G0w", 'G8w', 'G8w', 'G8w', 'G8w')
+)
+#查看数据格式
+head(fpkm)
+
+####方法1
+exp_gene <- log2(fpkm+1)
+#df1 <- df
+#设置分组信息
+group_list <- factor(group[,2],ordered = F)
+design <- model.matrix(~0+group_list)
+colnames(design) <- levels(group_list)
+rownames(design) <- colnames(exp_gene)
+design
+#线性模型拟合
+fit <- lmFit(exp_gene,design)
+#构建比较矩阵
+cont.matrix <- makeContrasts(contrasts = "G8w-G0w",levels = design)
+cont.matrix
+
+fit2 <- contrasts.fit(fit,cont.matrix) # 构建数据线性模型,计算估计的相关系数和标准差
+fit2 <- eBayes(fit2) # 贝叶斯检验
+tmpOut <- topTable(fit2,coef = 1,n = Inf,adjust.method = "BH",sort.by = "logFC") # 结果
+dif <- tmpOut[tmpOut$P.Value <= 0.05 & abs(tmpOut$logFC) > 0,]
+dim(dif)
+write.csv(tmpOut,file = "/data/home/liangzehang/diff_G8w-G0w_limma_log.csv")
+
+##火山图
+diff_FLD_limma <- read.csv("diff_FLD_limma_log.csv",row.names = 1)
+diff_FLD <- diff_FLD_limma %>% mutate(symbol=rownames(diff_FLD_limma))%>%
+  select(symbol = symbol ,log2FoldChange = logFC,padj = adj.P.Val)
+
+diff_G8w_G0w <- read.csv("diff_G8w-G0w_limma_log.csv",row.names = 1)
+diff_liver <- diff_G8w_G0w%>%mutate(symbol=rownames(diff_G8w_G0w))%>%
+  select(symbol = symbol ,log2FoldChange = logFC,padj = adj.P.Val)
+
+volcano2 <- VolcanoPlot(diff_liver, log2FC = 1, padj = 0.05, 
+                        title = "G8wvsG0w", label.max = 20)
+
+nor = T 
+exp = fpkm
+meta = group
+genelist = NULL
+
+if (nor) {
+  # 过滤：至少在2个样本中表达值 > 1（阈值可根据数据调整）
+  keep <- rowSums(exp > 1) >= 2
+  exp_filtered <- exp[keep, , drop = FALSE]
+  cat("过滤后剩余基因数：", nrow(exp_filtered), "\n")
+  # log2转换（log2(x+1)）
+  exp <- log2(exp_filtered + 1)
+}
+#选中方差25%最大的基因
+if (is.null(genelist)) {
+  gene_number = round(nrow(exp) * 0.25) 
+  gene_var <- apply(exp, 1, var)
+  top_genes <- names(sort(gene_var, decreasing = TRUE))[1:gene_number]
+  logCPM_top <- exp[top_genes,]
+  exp_for_pca <- logCPM_top
+} else {
+  exp_for_pca = exp[which(rownames(exp) %in% genelist),]
+}
+#-------------------PCA分析-------------------------------------------# 
+# PCA：注意 t() 因为样本为列，要转为行为样本
+pca_res <- prcomp(t(exp_for_pca), scale. = F)
+# 构建数据框（前两主成分）
+pca_df <- as.data.frame(pca_res$x[, 1:2])
+colData = meta
+pca_df$Group <- colData$Group   # 分组列名改为 Group
+pca_df$Group = factor(pca_df$Group, levels = unique(pca_df$Group))
+# 绘图（含置信椭圆）
+color_vector <- c("#066190","#C42238","#4E79A7", "#F28E2B", "#E15759", 
+                  "#76B7B2", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7")
+pca_summary <- summary(pca_res)
+pc1_var <- round(pca_summary$importance[2, 1] * 100, 1)
+pc2_var <- round(pca_summary$importance[2, 2] * 100, 1)
+# 标准化 PC1 和 PC2
+pca_df$PC1_scaled <- scale(pca_df$PC1)
+pca_df$PC2_scaled <- scale(pca_df$PC2)
+# 标准化 PC1 和 PC2（冗余，保留原样）
+pca_df$PC1_scaled <- as.numeric(scale(pca_df$PC1))
+pca_df$PC2_scaled <- as.numeric(scale(pca_df$PC2))
+p1 = ggplot(pca_df, aes(x = PC1_scaled, y = PC2_scaled, color = Group)) +  # 改为 Group
+  
+  # 1️⃣ 点
+  geom_point(size = 4, alpha = 0.9) +
+  
+  # 2️⃣ label
+  geom_text_repel(
+    aes(label = rownames(pca_df)),
+    size = 3.5,
+    family = "",
+    max.overlaps = Inf,
+    box.padding = 0.4,
+    point.padding = 0.3,
+    segment.color = "grey50",
+    segment.size = 0.3,
+    min.segment.length = 0,
+    show.legend = FALSE
+  ) +
+  # 3️⃣ 置信椭圆
+  stat_ellipse(
+    level = 0.90,
+    linetype = "dashed",
+    linewidth = 0.8,
+    show.legend = FALSE
+  ) +
+  # 4️⃣ 颜色
+  scale_color_manual(values = color_vector) +
+  scale_fill_manual(values = color_vector) +
+  theme_light(base_size = 18) +
+  labs(
+    title = "Principal component analysis (PCA)",
+    x = paste0("PC1 (", pc1_var, "%)"),
+    y = paste0("PC2 (", pc2_var, "%)")
+  ) +
+  theme(
+    plot.title = element_text(
+      hjust = 0.5,
+      family = "",
+      face = "plain",
+      size = 20
+    ),
+    plot.background = element_blank(),
+    panel.grid = element_blank()
+  )
+print(p1)
+
+theme_cns <- function(base_size = 16){
+  theme_classic(base_size = base_size) %+replace%
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      axis.title = element_text(face = "bold"),
+      axis.text = element_text(color = "black"),
+      legend.title = element_blank(),
+      legend.position = "right"
+    )
+}
+p2 = p1 + theme_cns()
+print(p2)
+
+#permanova_analysis
+library(vegan)
+library(tidyverse)
+pc_data <- as.data.frame(pca_res$x)
+Group <- c("G0w", "G0w", "G0w", "G0w", 'G8w', 'G8w', 'G8w', 'G8w')
+Group <- factor(Group)
+# ---------- 2. 计算距离矩阵 
+# 在PC空间中，通常使用欧氏距离
+dist_matrix <- vegdist(pc_data, method = "euclidean")#用原始数据分析需将pc_data改为t(log2(fpkm+1))
+# ---------- 3. 执行PERMANOVA（整体检验） 
+set.seed(123)  # 设置随机种子，保证结果可重复
+permanova_result <- adonis2(dist_matrix ~ Group, permutations = 999)
+print(permanova_result)
+
+# 输出结果中的 Pr(>F) 即为P值，若 < 0.05 则说明组间有显著差异
+
+# ---------- 4. 检验多元离散度（PERMDISP） 
+# 用于检查是否满足“多元齐性”假设，若显著则需谨慎解释PERMANOVA结果
+dispersal_result <- betadisper(dist_matrix, Group)
+permdisp_test <- permutest(dispersal_result, permutations = 999)
+print(permdisp_test)
+# 若 permdisp_test 的 P 值 < 0.05，说明组间离散度显著不同，PERMANOVA的显著可能由离散度差异引起
+
+# 可选：绘制箱线图查看离散度
+boxplot(dispersal_result)
+
+#提取P值
+p_value <- paste0("PERMANOVA P = ",permanova_result$`Pr(>F)`[1])
+p_disp_value <- paste0("PERMDISP P = ",permdisp_test$tab$`Pr(>F)`[1])
+#PCA图添加p值
+p2+annotate("text", x = Inf, y = Inf, 
+            label =  paste(p_value, p_disp_value, sep = "\n"), 
+            hjust = 1.1, vjust = 1.1, size = 5, 
+            color = "black", fontface = "bold")
+
+
+##Fig.6P####
+df_diff <- readxl::read_xlsx("/data02/huzhiyang_03/FLD/result/30.ATAC/07_diff_peak/G4_vs_G1/G4_vs_G1.gene.xlsx")
+df_diff <- df_diff %>% data.table::setnames(c(33,7,8),c("symbol", "log2FoldChange", "padj"))
+volcano <- VolcanoPlot(df_diff, log2FC = 1, padj = 0.05, 
+                       title = "WD 8wks vs ND", label.max = 20)
+
+##Fig.6Q####
+df_plot <- readxl::read_xlsx("/data02/huzhiyang_03/FLD/result/30.ATAC/FA_gene/FA_peak_logFC1.xlsx")
+df_plot$id <- seq(1, nrow(df_plot))
+# 获取每个标签的名称和y位置
+label_data <- df_plot
+number_of_bar <- nrow(label_data)
+angle <- 90 - 360 * (label_data$id-0.5) /number_of_bar     # I substract 0.5 because the letter must have the angle of the center of the bars. Not extreme right(1) or extreme left (0)
+label_data$hjust <- ifelse( angle < -90, 1, 0)
+label_data$angle <- ifelse(angle < -90, angle+180, angle)
+
+sort_gene <- df_plot %>% arrange(desc(log2FC)) %>% pull(geneName)
+df_plot$geneName <- factor(df_plot$geneName, levels = sort_gene)
+# 绘图
+p1 <- ggplot(df_plot, aes(x = as.factor(id), y = log2FC, fill = log2FC)) +
+  geom_bar(stat = "identity", alpha = 0.5) +
+  scale_fill_gradient2(low = "white",high = "#a50026",limits = c(1, 2.1),midpoint = 1.005) +
+  ylim(0, max(df_plot$log2FC)) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 10,colour = "black",hjust = 0.5),
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank()
+  ) +
+  coord_polar() +
+  geom_text(data = label_data, aes(x = id, y = log2FC, label = geneName, hjust = hjust),
+            color = "black", fontface = "plain", alpha = 1, size = 2.5,
+            angle = label_data$angle, inherit.aes = FALSE) +
+  labs(fill = "log2FC",title = "Fold change (8WD-ND-8WD vs 8ND-ND-8WD)")
+p1
+
+##Fig.6R####
+library(openxlsx)
+atac_result <- read.xlsx("~/fatty_liver_hzy/recovery_model/result.G4_vs_G1.GO_Enrichment.xlsx")
+atac_result$gene_ratio <- atac_result$S/atac_result$B
+atac_result_sub <- atac_result[grepl("lipid|fatty", atac_result$GO_Term), ] %>%
+  filter(GO_Category == "Biological Process") %>%
+  arrange(Q.value)
+atac_result_sub$logq <- -log10(atac_result_sub$Q.value)
+atac_result_sub <- atac_result_sub[c(1:10), ]
+atac_result_sub$order <- factor(atac_result_sub$GO_Term, level = rev(atac_result_sub$GO_Term))
+
+
+atac_result_sub$logq[atac_result_sub$logq > 100 ] <- 100
+ggplot(data=atac_result_sub, aes(x = logq,y = order,fill=logq))  +  #fill=PValue，根据PValue填充颜色；color=PValue根据PValue改变线的颜色  
+  geom_bar(stat="identity",width=0.8 ) + 
+  ylim(rev(atac_result_sub$GO_Term)) + #柱状图宽度与y轴显示顺序
+  theme_test() + #调整背景色  
+  scale_fill_gradientn(colours = viridis::viridis(256, begin = 0.3, end = 1)) +  #调节填充的颜色
+  labs(x="-log(q)",y="",title="enrich_GO") + #设置图内标签（x、y轴、标题）
+  theme(axis.text=element_text(size=12,color="black"),  
+        axis.title = element_text(size=16),title = element_text(size=13), legend.position = "none")
